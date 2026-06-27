@@ -1,0 +1,21 @@
+{
+    "identifier": "org.kicad.contrib.svglabelexport",
+    "name": "SVG Export with Labels",
+    "description": "Plot selected board layers to SVG (like the built-in Plot dialog) and overlay pad numbers, pad net names, and/or component reference designators as text on top of the pads.",
+    "runtime": {
+        "type": "python",
+        "min_version": "3.9"
+    },
+    "actions": [
+        {
+            "identifier": "export",
+            "name": "Export SVG with Labels...",
+            "description": "Plot the chosen layers to SVG and overlay pad numbers / net names / component references.",
+            "show-button": true,
+            "scopes": [
+                "pcb"
+            ],
+            "entrypoint": "svg_label_export.py"
+        }
+    ]
+}

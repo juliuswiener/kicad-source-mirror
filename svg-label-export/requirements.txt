@@ -1,0 +1,9 @@
+# Python dependencies for the "SVG Export with Labels" KiCad plugin.
+#
+# kicad-python (imported as `kipy`) is the official binding for the KiCad 10
+# IPC API.  KiCad can install this for you into the plugin's managed Python
+# environment (Preferences > Plugins), or install it manually with:
+#
+#     pip install -r requirements.txt
+#
+kicad-python>=0.4.0
