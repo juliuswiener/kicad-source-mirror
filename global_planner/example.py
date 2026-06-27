@@ -21,12 +21,17 @@ def box(cx, cy, w, h):
 
 
 # ---- The adapter you implement on the KiCad side ---------------------------
-# Returns (ok, blocking_point_or_None). Here: a mock that "fails" if a path
-# tries to squeeze through the central gap (pretend PNS couldn't shove enough).
+# Returns (ok, blocking_point_or_None). Mock standing in for PNS: it samples
+# ALONG each segment (as the real router would see the whole trace) and "fails"
+# if the line passes through the central gap — pretend PNS couldn't shove enough.
 def route_and_check(waypoints):
-    for w in waypoints:               # w is a gplan.Waypoint (w.p, w.layer)
-        if abs(w.p.x - 5.0) < 2.0 and abs(w.p.y) < 1.0:
-            return False, gplan.Point(5.0, 0.0)   # blocked in the gap
+    for a, b in zip(waypoints, waypoints[1:]):
+        for k in range(21):
+            t = k / 20.0
+            x = a.p.x + (b.p.x - a.p.x) * t
+            y = a.p.y + (b.p.y - a.p.y) * t
+            if abs(x - 5.0) < 1.0 and abs(y) < 0.8:
+                return False, gplan.Point(5.0, 0.0)   # stuck in the gap
     return True, None
 # ---------------------------------------------------------------------------
 

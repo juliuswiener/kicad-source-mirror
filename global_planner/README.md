@@ -24,14 +24,21 @@ planner re-ranks (negotiated-congestion / PathFinder style).
 ## Build & test
 
 ```bash
-# C++ self-test (no Python needed):
-g++ -std=c++17 -O2 planner_core.cpp selftest.cpp -o selftest && ./selftest
+# Core tests (ctest) + sanitizers — the standalone core is fully covered:
+cmake -B build -DGPLAN_SANITIZE=ON .
+cmake --build build && ( cd build && ctest --output-on-failure )
 
-# Python module:
+# Python module + end-to-end demo of the plan->verify->bump->replan loop:
 pip install pybind11
-cmake -B build -DBUILD_PYTHON=ON . && cmake --build build
+cmake -B build -DBUILD_PYTHON=ON -Dpybind11_DIR=$(python3 -m pybind11 --cmakedir) .
+cmake --build build
 PYTHONPATH=build python3 example.py
 ```
+
+`tests.cpp` covers: open field, start==target, two-homotopy enumeration with a
+geometric margin-clearance assertion, movable-doesn't-block + congestion
+re-ranking, routing from inside a pad, fully-enclosed/unreachable, non-convex
+fixed input, multi-layer vias, and dedup. All pass clean under ASan/UBSan.
 
 ## The KiCad-side bridge (`pns_bridge.{h,cpp}`)
 
@@ -74,3 +81,22 @@ planner.bumpCongestion( where, radius, factor );         // after a PNS failure
 - Capacity/tightness use distance approximations, not swept-polygon clipping —
   fine because PNS is the ground truth; the planner only proposes. Tune
   `wCongestion`, `wTightness`, `reusePenalty`, `viaCost` per board.
+
+## Performance & scaling
+
+Graph build is ~O(n³) in the obstacle count n (n=20 → ~0.9 ms, n=100 → ~60 ms,
+n=200 → ~370 ms per `plan()`, single core). For the intended use — *local*
+"last-bits" routing — feed only obstacles in the route's neighbourhood (the
+bridge's `getObstacles` can be bounded to a bbox around start/target); n then
+stays in the tens and each plan is sub-10 ms. For a 100-target evaluation loop,
+reuse one `Planner` and run targets across worker processes (the core is
+stateless between `plan()` calls except for `bumpCongestion`).
+
+## Bridge build status
+
+The pure core + Python bindings are built, tested (ctest, ASan/UBSan) and run
+end-to-end here. `pns_bridge.{h,cpp}` is **KiCad-linked and cannot be compiled
+outside the KiCad tree**; every one of its ~60 PNS/BOARD API calls was verified
+against the repository headers (signatures match). Build it inside the KiCad
+tree to validate at runtime; the via-placement sequence
+(`ToggleViaPlacement`/`SwitchLayer`) is a first cut to confirm there.

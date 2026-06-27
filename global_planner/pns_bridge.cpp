@@ -53,7 +53,7 @@ PnsBridge::~PnsBridge() = default;
 
 bool PnsBridge::load( const std::string& pcbPath )
 {
-    m_settings = std::make_unique<SETTINGS_MANAGER>( /*aHeadless=*/ true );
+    m_settings = std::make_unique<SETTINGS_MANAGER>();
 
     wxFileName pro( pcbPath );
     pro.SetExt( wxT( "kicad_pro" ) );

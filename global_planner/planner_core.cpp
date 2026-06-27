@@ -106,6 +106,33 @@ Point lineIntersect( Point p1, Point d1, Point p2, Point d2 )
     return { p1.x + d1.x * t, p1.y + d1.y * t };
 }
 
+// Convex hull (Andrew's monotone chain). Defensive: callers may pass a slightly
+// non-convex fixed hull; we hull it so offsetConvex() stays well-defined.
+Polygon convexHull( Polygon pts )
+{
+    size_t n = pts.size();
+    if( n < 3 )
+        return pts;
+    std::sort( pts.begin(), pts.end(),
+               []( Point a, Point b ) { return a.x < b.x || ( a.x == b.x && a.y < b.y ); } );
+    std::vector<Point> h( 2 * n );
+    int k = 0;
+    auto crossOA = []( Point o, Point a, Point b )
+    { return cross( sub( a, o ), sub( b, o ) ); };
+    for( size_t i = 0; i < n; ++i )                       // lower hull
+    {
+        while( k >= 2 && crossOA( h[k - 2], h[k - 1], pts[i] ) <= 0 ) k--;
+        h[k++] = pts[i];
+    }
+    for( size_t i = n - 1, t = k + 1; i > 0; --i )        // upper hull
+    {
+        while( k >= (int) t && crossOA( h[k - 2], h[k - 1], pts[i - 1] ) <= 0 ) k--;
+        h[k++] = pts[i - 1];
+    }
+    h.resize( k - 1 );
+    return h;
+}
+
 // Offset a convex CCW polygon outward by d (sharp corners).
 Polygon offsetConvex( const Polygon& ccw, double d )
 {
@@ -170,7 +197,9 @@ void Planner::buildLayers()
         LayerData& ld = m_layerData[sp];
         if( ob.fixed )
         {
-            Polygon ccw = asCCW( ob.poly );
+            Polygon ccw = asCCW( convexHull( ob.poly ) );  // defensive: ensure convex
+            if( ccw.size() < 3 )
+                continue;                                  // degenerate, ignore
             ld.fixedOrig.push_back( ccw );
             ld.fixedInflated.push_back( offsetConvex( ccw, margin ) );
             ld.fixedBlock.push_back( offsetConvex( ccw, margin - eps ) );
@@ -196,26 +225,44 @@ void Planner::buildNodes( Point start, int sL, Point target, int tL )
 {
     m_nodes.clear();
 
+    // Start and target are added first and are NEVER filtered: they legitimately
+    // sit on/inside their own pad hulls.
+    m_srcIdx = static_cast<int>( m_nodes.size() );
+    m_nodes.push_back( { start, sL } );
+    m_dstIdx = static_cast<int>( m_nodes.size() );
+    m_nodes.push_back( { target, tL } );
+
     // Candidate (x,y) columns: start, target, and every fixed inflated corner
-    // from every layer. Each column is replicated on every routed layer so a via
-    // can land there.
+    // from every layer. Each column is replicated on every routed layer (so a via
+    // can land there) — but only where the position is actually clear of fixed
+    // copper on that layer. A corner that falls inside an overlapping obstacle is
+    // not a valid placement and must be dropped (else it would open a hole).
     std::vector<Point> xy = { start, target };
     for( const LayerData& ld : m_layerData )
         for( const Polygon& hull : ld.fixedInflated )
             for( const Point& v : hull )
                 xy.push_back( v );
 
-    m_srcIdx = m_dstIdx = -1;
+    auto insideAnyBlock = [&]( Point p, int sp )
+    {
+        for( const Polygon& b : m_layerData[sp].fixedBlock )
+            if( pointInPolygon( p, b ) )
+                return true;
+        return false;
+    };
+
     for( int layer : m_params.layers )
     {
+        int sp = stackPos( layer );
         for( const Point& p : xy )
         {
-            int idx = static_cast<int>( m_nodes.size() );
+            // Don't duplicate the start/target nodes already added.
+            if( ( layer == sL && dist( p, start ) < 1e-9 )
+                || ( layer == tL && dist( p, target ) < 1e-9 ) )
+                continue;
+            if( sp >= 0 && insideAnyBlock( p, sp ) )
+                continue;
             m_nodes.push_back( { p, layer } );
-            if( m_srcIdx < 0 && layer == sL && dist( p, start ) < 1e-9 )
-                m_srcIdx = idx;
-            if( m_dstIdx < 0 && layer == tL && dist( p, target ) < 1e-9 )
-                m_dstIdx = idx;
         }
     }
 }
@@ -227,12 +274,19 @@ bool Planner::edgeBlocked( Point a, Point b, int layer ) const
         return true;
     const int K = 24;
     for( const Polygon& block : m_layerData[sp].fixedBlock )
+    {
+        // An endpoint inside this hull means we are legitimately leaving/entering
+        // the obstacle it represents (e.g. the source/target pad) — it must not
+        // block edges incident to that endpoint.
+        if( pointInPolygon( a, block ) || pointInPolygon( b, block ) )
+            continue;
         for( int k = 1; k < K; ++k )
         {
             double t = static_cast<double>( k ) / K;
             if( pointInPolygon( { a.x + ( b.x - a.x ) * t, a.y + ( b.y - a.y ) * t }, block ) )
                 return true;
         }
+    }
     return false;
 }
 
@@ -395,6 +449,15 @@ std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
     std::vector<Path> result;
     if( m_srcIdx < 0 || m_dstIdx < 0 )
         return result;
+
+    // Trivial: start and target coincide (same point, same layer).
+    if( sL == tL && dist( start, target ) < 1e-9 )
+    {
+        Path p;
+        p.waypoints = { { start, sL } };
+        result.push_back( p );
+        return result;
+    }
 
     std::vector<double> mul( m_edgeList.size(), 1.0 );
 
