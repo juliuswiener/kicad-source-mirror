@@ -24,8 +24,8 @@ def box(cx, cy, w, h):
 # Returns (ok, blocking_point_or_None). Here: a mock that "fails" if a path
 # tries to squeeze through the central gap (pretend PNS couldn't shove enough).
 def route_and_check(waypoints):
-    for w in waypoints:
-        if abs(w.x - 5.0) < 2.0 and abs(w.y) < 1.0:
+    for w in waypoints:               # w is a gplan.Waypoint (w.p, w.layer)
+        if abs(w.p.x - 5.0) < 2.0 and abs(w.p.y) < 1.0:
             return False, gplan.Point(5.0, 0.0)   # blocked in the gap
     return True, None
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ def main():
 
         routed = False
         for p in paths:
-            wps = [(round(w.x, 2), round(w.y, 2)) for w in p.waypoints]
+            wps = [(round(w.p.x, 2), round(w.p.y, 2), w.layer) for w in p.waypoints]
             ok, blk = route_and_check(p.waypoints)
             print(f"   try {wps} -> {'OK' if ok else 'FAIL'}")
             if ok:

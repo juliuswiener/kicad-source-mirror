@@ -12,6 +12,12 @@ target_include_directories( planner_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} )
 add_executable( selftest selftest.cpp )
 target_link_libraries( selftest PRIVATE planner_core )
 
+# --- KiCad-linked PNS bridge (pns_bridge.cpp) ------------------------------
+# NOT buildable here: it links pcbnew/kicommon. Add it to your in-tree build,
+# e.g. drop these sources next to qa/tools/pns and link the same libraries the
+# pns regression tool links (pcbnew_kiface_objects / kicommon / pnskernel).
+#   sources: pns_bridge.cpp planner_core.cpp  (+ bridge_bindings.cpp for Python)
+
 # --- Python module (optional; needs pybind11) ------------------------------
 #   pip install pybind11
 #   cmake -DBUILD_PYTHON=ON ..

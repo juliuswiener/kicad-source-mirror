@@ -33,15 +33,23 @@ cmake -B build -DBUILD_PYTHON=ON . && cmake --build build
 PYTHONPATH=build python3 example.py
 ```
 
-## The two adapters YOU provide (KiCad-linked, not in this core)
+## The KiCad-side bridge (`pns_bridge.{h,cpp}`)
+
+The two adapters are implemented in `pns_bridge.cpp` (KiCad-linked, **builds in
+the KiCad tree only** — not part of the dependency-free core):
 
 | Adapter | Direction | What it does |
 |---|---|---|
-| obstacle source | board → core | After `SyncWorld`, walk the PNS world; emit each item as `Obstacle{ poly = Hull(), fixed = !item->IsMovable() }`. Fixed hulls must be convex. |
-| route verifier   | core → board | Feed a candidate's waypoints to PNS (`StartRouting` → `Move` per waypoint → `Move(target)`), then `QueryColliding` on the placed trace. Return `(ok, blockingPoint)`. |
+| `getObstacles(layer)` | board → core | Walks the BOARD; emits each item as `Obstacle{ poly, fixed = pad/locked/keepout, layer }`. v1 uses bounding boxes for fixed shapes (convex, conservative). |
+| `routeAndCheck(path)` | core → board | Loads board+rules, drives PNS shove along the waypoints (`StartRouting` → `Move` per waypoint, layer change → via), then `QueryColliding` on the placed trace. Returns `(ok, collided, blocking)`. |
 
-Orchestrate the `plan → verify → bump_congestion → replan` loop in Python
-(see `example.py`).
+It is modelled on the verified headless harness `qa/tools/pns/pns_log_player.cpp`
+and the collision read-out in `pcbnew/router/pns_router.cpp::markViolations()`.
+`load()` uses `BOARD_LOADER::Load`, which attaches `.kicad_pro` and runs
+`InitEngine()` on `.kicad_dru` automatically (filename convention — same stem).
+
+Orchestrate the `plan → verify → bump_congestion → replan` loop yourself
+(see `example.py` for the loop with a mocked router).
 
 ## API
 
@@ -51,14 +59,18 @@ std::vector<Path> paths = planner.plan(start, target);   // ascending cost
 planner.bumpCongestion( where, radius, factor );         // after a PNS failure
 ```
 
-## v1 limitations / roadmap
+## Status / limitations
 
-- **Single layer, no vias.** Start and target must be on one layer. v2: stack a
-  graph per layer and add via-edges (with a via cost) between them — this is the
-  only globally-aware place to plan layer changes.
-- Fixed hulls assumed **convex** (PNS `Hull()` is). Non-convex fixed shapes would
-  need decomposition.
-- `corridorClear`/capacity use distance approximations, not swept-polygon
-  clipping — fine because PNS is the ground truth; the planner only proposes.
-- Congestion `capacity = gap / pitch` is an estimate; tune `wCongestion`,
-  `wTightness`, `reusePenalty` per board.
+- **Multi-layer + vias: done.** `params.layers` lists the copper stack; the
+  planner adds via-edges (cost `viaCost`) between adjacent layers at clear
+  landing sites. A waypoint layer change == "drop a via". `plan(start, sL,
+  target, tL)`; a single-layer `plan(start, target)` convenience remains.
+- Fixed hulls must be **convex** (bounding boxes in the bridge are; PNS `Hull()`
+  is too). Non-convex fixed shapes would need decomposition.
+- Via sites are restricted to graph columns (obstacle corners + start/target).
+  Fine for "last bits"; a denser via-candidate set can be added if needed.
+- Bridge via handling (`ToggleViaPlacement`/`SwitchLayer`) is a first cut —
+  verify against your PNS version.
+- Capacity/tightness use distance approximations, not swept-polygon clipping —
+  fine because PNS is the ground truth; the planner only proposes. Tune
+  `wCongestion`, `wTightness`, `reusePenalty`, `viaCost` per board.

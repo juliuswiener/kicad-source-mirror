@@ -1,22 +1,24 @@
 // planner_core.h
 //
-// Standalone global-routing path planner.
+// Standalone global-routing path planner (v2: multi-layer + vias).
 //
 // Pure geometry: NO KiCad / PNS / wx dependency. Only the C++ standard library.
-// The planner turns a set of obstacles + a (start, target) pair into a small set
-// of ranked candidate "homotopy" paths (which side of each obstacle to pass),
-// expressed as polyline waypoints.
+// Turns a set of obstacles + a (start, target) pair — each on a copper layer —
+// into a small set of ranked candidate "homotopy" paths (which side of each
+// obstacle to pass, and where to change layers), expressed as polyline waypoints
+// that carry a layer. A layer change between two same-position waypoints means
+// "drop a via here".
 //
 // It does NOT route or shove. The caller feeds the waypoints to a detailed router
-// (e.g. KiCad PNS) and reports failures back via bumpCongestion() so the planner
-// can re-rank (negotiated-congestion / PathFinder style).
+// (KiCad PNS) and reports failures back via bumpCongestion().
 //
-// Units are arbitrary but must be consistent (mm or nm — your choice).
+// Units are arbitrary but must be consistent (mm or nm). Layers are integer ids;
+// PlannerParams::layers lists them in physical stack order (adjacent entries may
+// be connected by a via).
 
 #pragma once
 
 #include <vector>
-#include <cstdint>
 
 namespace gplan {
 
@@ -26,39 +28,48 @@ struct Point
     double y = 0.0;
 };
 
-// A closed polygon (vertices in order; first/last need not be repeated).
 using Polygon = std::vector<Point>;
 
 struct Obstacle
 {
     Polygon poly;
-    bool    fixed = true;   // true  = pad / locked track / keepout / board edge  -> HARD
-                            // false = movable copper (existing routed track/via) -> SOFT
+    bool    fixed = true;   // true = pad/locked/keepout (HARD), false = movable copper (SOFT)
+    int     layer = 0;      // copper layer this obstacle sits on.
+                            // A multi-layer item (via / THT pad) is added once PER layer.
 };
 
 struct PlannerParams
 {
-    double trackWidth = 0.15;   // width of the net we are routing
-    double clearance  = 0.15;   // required clearance to neighbours
+    double trackWidth = 0.15;
+    double clearance  = 0.15;
 
-    int    kPaths     = 5;      // how many distinct candidate paths to return
+    int    kPaths     = 5;
 
-    double wCongestion = 1.0;   // weight of the "channel is filling up" penalty
-    double wTightness  = 1.0;   // weight of the "this gap is narrow" penalty
+    double wCongestion = 1.0;
+    double wTightness  = 1.0;
+    double reusePenalty = 3.0;
 
-    double reusePenalty = 3.0;  // edge cost multiplier to force later paths to differ
+    // Layer stack in physical order, e.g. {0, 1} or {0, 1, 2, 3}. Vias may connect
+    // entries that are adjacent in THIS list.
+    std::vector<int> layers = { 0 };
 
-    double cornerOffset = 1.10; // how far (× margin) to push graph nodes outside hulls
+    double viaCost      = 5.0;   // cost added per layer transition (steer via count)
+    double viaClearance = 0.15;  // clearance required around a via landing site
+    double viaDiameter  = 0.45;  // via pad diameter (for the landing-site clear test)
+};
+
+struct Waypoint
+{
+    Point p;
+    int   layer = 0;
 };
 
 struct Path
 {
-    std::vector<Point> waypoints;   // start ... corners ... target
-    double             cost = 0.0;  // planner cost (NOT a DRC guarantee)
+    std::vector<Waypoint> waypoints;   // start ... corners/vias ... target
+    double                cost = 0.0;  // planner cost (NOT a DRC guarantee)
 };
 
-// A localized congestion "bump" injected by the caller after a PNS failure.
-// Edges passing within `radius` of `center` get their congestion scaled by `factor`.
 struct CongestionBump
 {
     Point  center;
@@ -69,50 +80,55 @@ struct CongestionBump
 class Planner
 {
 public:
-    // NOTE: for v1, FIXED obstacle polygons must be CONVEX (e.g. PNS Hull()).
+    // NOTE: FIXED obstacle polygons must be CONVEX (e.g. PNS Hull()).
     // Movable obstacles may be any shape (used only for cost, never blocking).
     Planner( std::vector<Obstacle> obstacles, PlannerParams params );
 
-    // Compute up to params.kPaths distinct candidate paths from start to target.
-    // Returned in ascending cost order. Empty if start/target are unreachable
-    // through the FIXED obstacles (movable obstacles never block, only cost).
+    // Up to params.kPaths distinct candidate paths, ascending cost.
+    std::vector<Path> plan( Point start, int startLayer, Point target, int targetLayer );
+
+    // Convenience for single-layer use (start/target on params.layers[0]).
     std::vector<Path> plan( Point start, Point target );
 
-    // PathFinder feedback: tell the planner that routing failed near `where`
-    // (e.g. r.blockingObstacle position from PNS). Future plan() calls will avoid
-    // that area. Call repeatedly to escalate.
+    // PathFinder feedback after a router failure near `where` (any layer).
     void bumpCongestion( Point where, double radius, double factor );
-
     void clearCongestion();
 
 private:
-    struct Edge    { int to; int id; };          // id -> m_edgeList (holds the weight)
+    struct Node { Point p; int layer; };
+    struct Edge { int to; int id; };
     struct EdgeRef { int a; int b; double weight; };
 
-    // Build the node list (start, target, offset fixed-hull corners).
-    void buildNodes( const Point& start, const Point& target );
-    // (Re)build adjacency + weights for the current node set.
-    void buildEdges();
-    // A* over the current graph with a per-edge multiplier (for distinct paths).
-    std::vector<int> aStar( int src, int dst, const std::vector<double>& edgeMul ) const;
+    void  buildLayers();                               // group obstacles per layer
+    void  buildNodes( Point start, int sL, Point target, int tL );
+    void  buildEdges();
+    std::vector<int> aStar( int src, int dst, const std::vector<double>& mul ) const;
 
-    double edgeWeight( const Point& a, const Point& b ) const;
-    bool   edgeBlocked( const Point& a, const Point& b ) const; // fixed-obstacle test
+    double edgeWeight( Point a, Point b, int layer ) const;
+    bool   edgeBlocked( Point a, Point b, int layer ) const;
+    bool   viaSiteClear( Point p, int layer ) const;
+    int    stackPos( int layer ) const;                // index of layer in params.layers
 
-    std::vector<Obstacle>          m_obstacles;
-    PlannerParams                  m_params;
-    std::vector<CongestionBump>    m_bumps;
+    std::vector<Obstacle>       m_obstacles;
+    PlannerParams               m_params;
+    std::vector<CongestionBump> m_bumps;
 
-    // Precomputed in the constructor (configuration-space expansion).
-    std::vector<Polygon>           m_fixedOrig;       // for tightness/capacity
-    std::vector<Polygon>           m_fixedInflated;   // offset by margin -> graph nodes
-    std::vector<Polygon>           m_fixedBlock;      // offset by ~margin -> edge blocking
-    std::vector<Polygon>           m_movable;         // for congestion (cost only)
+    // Per-layer configuration-space data (keyed by layer id).
+    struct LayerData
+    {
+        std::vector<Polygon> fixedOrig;     // for tightness/capacity
+        std::vector<Polygon> fixedInflated; // offset by margin -> graph nodes
+        std::vector<Polygon> fixedBlock;    // offset by ~margin -> edge blocking
+        std::vector<Polygon> movable;       // for congestion
+    };
+    std::vector<LayerData> m_layerData;      // indexed by stackPos()
 
     // Graph state, rebuilt per plan().
-    std::vector<Point>             m_nodes;          // index 0 = start, 1 = target
-    std::vector<std::vector<Edge>> m_adj;            // m_adj[i] = edges out of node i
-    std::vector<EdgeRef>           m_edgeList;       // flat list; index == edge id
+    std::vector<Node>              m_nodes;
+    std::vector<std::vector<Edge>> m_adj;
+    std::vector<EdgeRef>           m_edgeList;
+    int                            m_srcIdx = 0;
+    int                            m_dstIdx = 1;
 };
 
 } // namespace gplan
