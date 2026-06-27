@@ -1,0 +1,4 @@
+/build/
+/selftest
+*.o
+*.so
