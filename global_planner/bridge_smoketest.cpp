@@ -17,6 +17,7 @@
 
 #include <pad.h>
 #include <footprint.h>
+#include <pcb_track.h>
 
 #include <pgm_base.h>
 #include <board.h>
@@ -219,6 +220,48 @@ static int run( int argc, char** argv )
         std::printf( "T10 re-attach routeAndCheck: ok=%d placed=%d\n", rr.ok, rr.placed );
         if( !rr.placed )
         { std::printf( "T10 FAIL: route after re-attach placed nothing\n" ); return 1; }
+    }
+
+    // --- T9: make net 1 unrouted (remove its tracks), find the ratsnest target
+    //          via the bridge, and route the now-unrouted net. ----------------
+    {
+        std::vector<PCB_TRACK*> rm;
+        for( PCB_TRACK* t : board->Tracks() )
+            if( t->GetNetCode() == 1 && t->Type() != PCB_VIA_T )
+                rm.push_back( t );
+        for( PCB_TRACK* t : rm )
+            board->Remove( t );
+        board->BuildConnectivity();
+        br.cleanup();
+        br.attach( board.get() );
+        std::printf( "T9: removed %zu net-1 tracks, re-synced\n", rm.size() );
+
+        VECTOR2I padP; bool haveStart = false;
+        for( FOOTPRINT* fp : board->Footprints() )
+        {
+            for( PAD* pad : fp->Pads() )
+                if( pad->GetNetCode() == 1 && pad->IsOnLayer( F_Cu ) )
+                { padP = pad->GetPosition(); haveStart = true; break; }
+            if( haveStart ) break;
+        }
+
+        if( haveStart )
+        {
+            auto tgt = br.nearestUnconnected( padP.x, padP.y, fcu );
+            if( !tgt )
+            { std::printf( "T9 FAIL: no ratsnest target on the unrouted net\n" ); return 1; }
+            std::printf( "T9 ratsnest target: (%.0f,%.0f) L%d\n",
+                         tgt->p.x, tgt->p.y, tgt->layer );
+            std::vector<gplan::Waypoint> wp = {
+                { { (double) padP.x, (double) padP.y }, fcu }, *tgt };
+            gbridge::RouteResult r = br.routeAndCheck( wp );
+            std::printf( "T9 routeAndCheck on unrouted net: ok=%d placed=%d collided=%d\n",
+                         r.ok, r.placed, r.collided );
+            if( !r.placed )
+            { std::printf( "T9 FAIL: could not route the now-unrouted net\n" ); return 1; }
+        }
+        else
+            std::printf( "T9: no net-1 F.Cu pad found; skipping\n" );
     }
 
     std::printf( "SMOKETEST OK\n" );

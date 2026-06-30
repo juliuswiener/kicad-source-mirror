@@ -91,5 +91,7 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def( "get_obstacles", &PnsBridge::getObstacles, py::arg( "pns_layer" ) )
         .def( "get_all_obstacles", &PnsBridge::getAllObstacles )
         .def( "route_and_check", &PnsBridge::routeAndCheck, py::arg( "waypoints" ) )
-        .def( "route_and_extract", &PnsBridge::routeAndExtract, py::arg( "waypoints" ) );
+        .def( "route_and_extract", &PnsBridge::routeAndExtract, py::arg( "waypoints" ) )
+        .def( "nearest_unconnected", &PnsBridge::nearestUnconnected,   // T9
+              py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ) );
 }

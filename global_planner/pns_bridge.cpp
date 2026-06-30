@@ -31,6 +31,7 @@
 #include <router/pns_via.h>
 #include <router/pns_node.h>
 #include <router/pns_placement_algo.h>
+#include <router/pns_layerset.h>
 
 using namespace gbridge;
 
@@ -504,4 +505,37 @@ RouteGeom PnsBridge::routeAndExtract( const std::vector<gplan::Waypoint>& wps )
     // Discard the session — host applies g.segs / g.viaList to the board itself.
     m_router->StopRouting();
     return g;
+}
+
+// ---------------------------------------------------------------------------
+// T9 — nearest unconnected ratsnest anchor from a start point on a net.
+// ---------------------------------------------------------------------------
+std::optional<gplan::Waypoint> PnsBridge::nearestUnconnected( double x, double y, int layer )
+{
+    VECTOR2I sp( (int) std::lround( x ), (int) std::lround( y ) );
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( sp );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( sp, 100000 );
+    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+    if( !startItem )
+        return std::nullopt;
+
+    PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
+    m_iface->SetStartLayerFromPNS( layer );
+    m_iface->ImportSizes( sizes, startItem, startItem->Net(), VECTOR2D( sp.x, sp.y ) );
+    m_router->UpdateSizes( sizes );
+
+    if( !m_router->StartRouting( sp, startItem, layer ) )
+        return std::nullopt;
+
+    VECTOR2I        other;
+    PNS_LAYER_RANGE otherLayers;
+    PNS::ITEM*      otherItem = nullptr;
+    bool ok = m_router->GetNearestRatnestAnchor( other, otherLayers, otherItem );
+    m_router->StopRouting();
+
+    if( !ok )
+        return std::nullopt;
+    return gplan::Waypoint{ { (double) other.x, (double) other.y }, otherLayers.Start() };
 }

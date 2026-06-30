@@ -1,0 +1,142 @@
+{
+  "goal": "Implement gplan near-term roadmap T1-T12 to production-ready, each gated deterministically",
+  "stories": [
+    {
+      "id": "T1",
+      "desc": "thread-safe m_bumps",
+      "gate": "ctest",
+      "files": [
+        "global_planner/planner_core.h",
+        "global_planner/planner_core.cpp",
+        "global_planner/tests.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T2",
+      "desc": "via-site interior check",
+      "gate": "ctest",
+      "files": [
+        "global_planner/planner_core.cpp",
+        "global_planner/tests.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T3",
+      "desc": "input validation",
+      "gate": "ctest",
+      "files": [
+        "global_planner/planner_core.cpp",
+        "global_planner/tests.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T6",
+      "desc": "swept-polygon edge blocking",
+      "gate": "ctest",
+      "files": [
+        "global_planner/planner_core.cpp",
+        "global_planner/tests.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T4",
+      "desc": "Yen k-distinct paths",
+      "gate": "ctest",
+      "files": [
+        "global_planner/planner_core.cpp",
+        "global_planner/tests.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T5",
+      "desc": "spatial index (grid)",
+      "gate": "ctest+perf",
+      "files": [
+        "global_planner/planner_core.cpp",
+        "global_planner/perf_tests.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T10",
+      "desc": "reloadable bridge",
+      "gate": "smoketest",
+      "files": [
+        "global_planner/pns_bridge.cpp",
+        "global_planner/pns_bridge.h",
+        "global_planner/bridge_smoketest.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T7",
+      "desc": "real Hull() extraction",
+      "gate": "smoketest",
+      "files": [
+        "global_planner/pns_bridge.cpp",
+        "global_planner/bridge_smoketest.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T8",
+      "desc": "board outline obstacle",
+      "gate": "smoketest",
+      "files": [
+        "global_planner/pns_bridge.cpp",
+        "global_planner/bridge_smoketest.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T9",
+      "desc": "ratsnest endpoints",
+      "gate": "smoketest",
+      "files": [
+        "global_planner/pns_bridge.cpp",
+        "global_planner/pns_bridge.h",
+        "global_planner/bridge_smoketest.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T12",
+      "desc": "selectable routing mode",
+      "gate": "smoketest",
+      "files": [
+        "global_planner/pns_bridge.cpp",
+        "global_planner/pns_bridge.h",
+        "global_planner/bridge_bindings.cpp",
+        "global_planner/bridge_smoketest.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    },
+    {
+      "id": "T11",
+      "desc": "board-level PathFinder loop",
+      "gate": "ctest",
+      "files": [
+        "global_planner/pathfinder.h",
+        "global_planner/pathfinder_tests.cpp"
+      ],
+      "passes": true,
+      "redCount": 0
+    }
+  ]
+}

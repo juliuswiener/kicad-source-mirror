@@ -15,6 +15,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -107,6 +108,12 @@ public:
     // is sealed into the PNS session node only — the BOARD is NOT mutated (host
     // applies segs/vias itself, keeping board edits auditable). See .cpp.
     RouteGeom routeAndExtract( const std::vector<gplan::Waypoint>& waypoints );
+
+    // T9 — from a start point on a net, return the nearest still-unconnected
+    // ratsnest anchor (the point this net needs to reach) as a Waypoint carrying
+    // its PNS layer. nullopt if the net is fully connected or the start is empty.
+    // Use this to feed gplan real UNROUTED endpoints instead of guessing pads.
+    std::optional<gplan::Waypoint> nearestUnconnected( double x, double y, int pnsLayer );
 
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }
