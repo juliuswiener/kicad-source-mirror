@@ -784,9 +784,22 @@ RouteChange PnsBridge::dragComponent( double x, double y, double newX, double ne
     PNS::ITEM_SET hits = m_router->QueryHoverItems( p );
     if( hits.Empty() )
         hits = m_router->QueryHoverItems( p, 200000 );
-    PNS::ITEM* seed = hits.Empty() ? nullptr : hits[0];
+    // Prefer a pad (SOLID) as the drag seed — a track sitting on the pad would
+    // have no parent footprint and defeat the lock check below.
+    PNS::ITEM* seed = nullptr;
+    for( PNS::ITEM* it : hits.Items() )
+        if( it->OfKind( PNS::ITEM::SOLID_T ) ) { seed = it; break; }
+    if( !seed )
+        seed = hits.Empty() ? nullptr : hits[0];
     if( !seed )
     { rc.reason = "no item at drag point"; return rc; }
+
+    // Respect a locked footprint as "do not move" (the host locks components it
+    // wants fixed; COMPONENT_DRAGGER itself only spares NPTH pads, not locks).
+    if( seed->Parent() )
+        if( FOOTPRINT* fp = seed->Parent()->GetParentFootprint() )
+            if( fp->IsLocked() )
+            { rc.reason = "component locked"; return rc; }
 
     if( !m_router->StartDragging( p, seed, PNS::DM_COMPONENT ) )
     { rc.reason = m_router->FailureReason().ToStdString(); return rc; }

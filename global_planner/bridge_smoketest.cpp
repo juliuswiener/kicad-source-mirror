@@ -255,22 +255,30 @@ static int run( int argc, char** argv )
 
     // --- dragComponent: shove a footprint + its tracks (connectivity-safe) ---
     {
-        VECTOR2I seed; bool haveSeed = false;
+        VECTOR2I seed; FOOTPRINT* seedFp = nullptr;
         for( FOOTPRINT* fp : board->Footprints() )      // seed from a real pad (has copper)
         {
             for( PAD* pad : fp->Pads() )
-                if( pad->IsOnLayer( F_Cu ) ) { seed = pad->GetPosition(); haveSeed = true; break; }
-            if( haveSeed ) break;
+                if( pad->IsOnLayer( F_Cu ) ) { seed = pad->GetPosition(); seedFp = fp; break; }
+            if( seedFp ) break;
         }
-        if( haveSeed )
+        if( seedFp )
         {
             VECTOR2I c = seed;
             gbridge::RouteChange d = br.dragComponent( c.x, c.y, c.x + 50000, c.y, false );
             std::printf( "dragComponent (+0.05mm): ok=%d placed=%d modSegs=%zu reason='%s'\n",
                          d.ok, d.placed, d.modSegs.size(), d.reason.c_str() );
-            // board-dependent whether a clean drag exists here; just require it
-            // RAN and returned a verdict without crashing.
-            std::printf( "DRAG ran (clean=%d)\n", d.ok );
+            std::printf( "DRAG ran (clean=%d, board-dependent)\n", d.ok );
+
+            // Lock the footprint -> dragComponent must refuse (deterministic).
+            seedFp->SetLocked( true );
+            gbridge::RouteChange d2 = br.dragComponent( c.x, c.y, c.x + 50000, c.y, false );
+            std::printf( "dragComponent on LOCKED footprint: ok=%d reason='%s'\n",
+                         d2.ok, d2.reason.c_str() );
+            seedFp->SetLocked( false );
+            if( d2.ok || d2.reason != std::string( "component locked" ) )
+            { std::printf( "LOCK FAIL: locked component was not refused\n" ); return 1; }
+            std::printf( "LOCK OK (locked component refused)\n" );
         }
     }
 
