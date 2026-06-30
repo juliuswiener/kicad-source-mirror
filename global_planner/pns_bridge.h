@@ -70,11 +70,14 @@ struct RouteGeom
 // PNS world so the next net shoves against it (route-order).
 struct RouteChange
 {
-    bool ok        = false;
-    bool placed    = false;
+    bool ok        = false;   // reached the target cleanly AND committed to world
+    bool placed    = false;   // PNS produced copper (may NOT reach — long-haul fragment)
+    bool reached   = false;   // the head actually reached the target point+layer
     bool collided  = false;
     int  vias      = 0;
     int  netcode   = -1;
+    gplan::Point blocking;    // farthest point reached toward target when !reached —
+                              // insert an intermediate waypoint here and retry
     std::string reason;
     // ADDED — new copper to create on the board.
     std::vector<std::vector<double>> addedSegs;   // {x1,y1,x2,y2,width,boardLayer}

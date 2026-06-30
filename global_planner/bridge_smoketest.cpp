@@ -226,13 +226,14 @@ static int run( int argc, char** argv )
     if( !paths.empty() )
     {
         gbridge::RouteChange c = br.routeAndCommit( paths.front().waypoints );
-        std::printf( "routeAndCommit: ok=%d placed=%d net=%d added=%zu mod=%zu "
-                     "removed=%zu vias=%d reason='%s'\n",
-                     c.ok, c.placed, c.netcode, c.addedSegs.size(),
-                     c.modSegUuids.size(), c.removedUuids.size(), c.vias, c.reason.c_str() );
-        if( !c.placed )
-        { std::printf( "COMMIT FAIL: nothing committed\n" ); return 1; }
-        std::printf( "COMMIT OK (%zu added segs, %zu modified neighbours by uuid)\n",
+        std::printf( "routeAndCommit: ok=%d placed=%d reached=%d collided=%d net=%d "
+                     "added=%zu mod=%zu removed=%zu vias=%d blocking=(%.0f,%.0f)\n",
+                     c.ok, c.placed, c.reached, c.collided, c.netcode, c.addedSegs.size(),
+                     c.modSegUuids.size(), c.removedUuids.size(), c.vias,
+                     c.blocking.x, c.blocking.y );
+        if( !c.ok )
+        { std::printf( "COMMIT FAIL: did not reach target (honest)\n" ); return 1; }
+        std::printf( "COMMIT OK (reached, %zu added segs, %zu modified neighbours by uuid)\n",
                      c.addedSegs.size(), c.modSegUuids.size() );
     }
 

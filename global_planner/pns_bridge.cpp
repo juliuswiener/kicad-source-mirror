@@ -656,11 +656,57 @@ RouteChange PnsBridge::routeAndCommit( const std::vector<gplan::Waypoint>& wps )
         m_router->Move( p, nullptr );
     }
 
-    // Finish the head, then commit to the world. CommitRouting() emits PNS's
-    // parent-matched Add/Update/RemoveItem into our HeadlessIface and persists
-    // the route into m_world (so the next net shoves against it).
-    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
     m_router->FixRoute( toV( wps.back() ), nullptr, true, false );
+
+    // Evaluate the finished head BEFORE committing. Only commit a route that
+    // actually REACHES the target cleanly — a long-haul (e.g. 28mm) that PNS
+    // could only fragment near the start must report ok=false and NOT pollute
+    // the world. Report the farthest point reached so the host can insert an
+    // intermediate waypoint there and retry.
+    VECTOR2I tgt  = toV( wps.back() );
+    int      tgtL = wps.back().layer;
+
+    PNS::PLACEMENT_ALGO* placer = m_router->Placer();
+    PNS::NODE*    node   = placer ? placer->CurrentNode( true ) : nullptr;
+    PNS::ITEM_SET traces = placer ? placer->Traces() : PNS::ITEM_SET();
+    rc.placed = node && traces.Size() > 0;
+
+    VECTOR2I farthest = startP;
+    if( rc.placed )
+    {
+        for( PNS::ITEM* it : traces.Items() )
+        {
+            if( !it->OfKind( PNS::ITEM::LINE_T ) )
+                continue;
+            PNS::LINE* l = static_cast<PNS::LINE*>( it );
+            if( !l->PointCount() )
+                continue;
+            VECTOR2I end = l->CLine().CPoint( -1 );
+            if( l->Layer() == tgtL && ( end - tgt ).EuclideanNorm() < 50000 )
+                rc.reached = true;
+            if( ( end - tgt ).EuclideanNorm() < ( farthest - tgt ).EuclideanNorm() )
+                farthest = end;
+        }
+        for( PNS::ITEM* it : traces.Items() )
+        {
+            PNS::NODE::OBSTACLES obs;
+            node->QueryColliding( it, obs );
+            if( !obs.empty() ) { rc.collided = true; break; }
+        }
+    }
+    rc.blocking = P( farthest );
+    rc.reason   = m_router->FailureReason().ToStdString();
+
+    if( !rc.reached || rc.collided )
+    {
+        rc.ok = false;
+        m_router->StopRouting();     // discard the fragment — commit nothing
+        return rc;
+    }
+
+    // Reached + clean → commit to world. CommitRouting() emits PNS's parent-
+    // matched Add/Update/RemoveItem into HeadlessIface and persists into m_world.
+    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
     hi->clearChanges();
     m_router->CommitRouting();
 
@@ -670,9 +716,7 @@ RouteChange PnsBridge::routeAndCommit( const std::vector<gplan::Waypoint>& wps )
     rc.modViaUuids = ch.modViaUuids; rc.modVias   = ch.modVias;
     rc.removedUuids = ch.removedUuids;
     rc.vias   = static_cast<int>( ch.addedVias.size() );
-    rc.placed = !rc.addedSegs.empty() || !rc.addedVias.empty();
-    rc.ok     = rc.placed;
-    rc.reason = m_router->FailureReason().ToStdString();
+    rc.ok     = true;
     return rc;
 }
 
