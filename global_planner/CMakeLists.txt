@@ -35,6 +35,10 @@ add_executable( perf_tests perf_tests.cpp )
 target_link_libraries( perf_tests PRIVATE planner_core )
 add_test( NAME perf_tests COMMAND perf_tests )
 
+add_executable( pathfinder_tests pathfinder_tests.cpp )   # T11 (header-only over core)
+target_link_libraries( pathfinder_tests PRIVATE planner_core )
+add_test( NAME pathfinder_tests COMMAND pathfinder_tests )
+
 # Dedicated TSan build of the core tests (race check for the thread-safe Planner).
 option( GPLAN_TSAN "Add a ThreadSanitizer test target" OFF )
 if( GPLAN_TSAN )
