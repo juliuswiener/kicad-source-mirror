@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <set>
 
 namespace gplan {
 
@@ -497,25 +498,92 @@ std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
         return result;
     }
 
-    std::vector<double> mul( m_edgeList.size(), 1.0 );
+    // ---- T4: Yen's k-shortest loopless paths (guarantees distinct routes) ----
+    const double      INF = 1e18;
+    const size_t      nEdges = m_edgeList.size();
+    std::vector<double> ones( nEdges, 1.0 );
 
-    for( int k = 0; k < m_params.kPaths; ++k )
+    auto edgeId = [&]( int u, int v ) -> int {
+        for( const Edge& e : m_adj[u] ) if( e.to == v ) return e.id;
+        return -1;
+    };
+    auto pathCost = [&]( const std::vector<int>& p ) {
+        double c = 0.0;
+        for( size_t i = 0; i + 1 < p.size(); ++i )
+        { int id = edgeId( p[i], p[i + 1] ); if( id >= 0 ) c += m_edgeList[id].weight; }
+        return c;
+    };
+
+    std::vector<std::vector<int>>   A;          // accepted shortest paths (node ids)
+    std::set<std::vector<int>>      inA;        // dedup
+    std::vector<std::pair<double, std::vector<int>>> B;   // candidate spur paths
+    std::set<std::vector<int>>      inB;
+
+    std::vector<int> first = aStar( m_srcIdx, m_dstIdx, ones );
+    if( !first.empty() )
     {
-        std::vector<int> nodes = aStar( m_srcIdx, m_dstIdx, mul );
-        if( nodes.empty() )
-            break;
+        A.push_back( first );
+        inA.insert( first );
 
+        while( (int) A.size() < m_params.kPaths )
+        {
+            const std::vector<int>& prev = A.back();
+            for( size_t i = 0; i + 1 < prev.size(); ++i )
+            {
+                int spur = prev[i];
+                std::vector<int> root( prev.begin(), prev.begin() + i + 1 );
+                std::vector<double> mul = ones;
+
+                // Remove the edge that each already-found path took from this spur,
+                // if that path shares the same root — forces a new branch here.
+                for( const std::vector<int>& p : A )
+                    if( p.size() > i + 1
+                        && std::equal( root.begin(), root.end(), p.begin() ) )
+                    { int id = edgeId( p[i], p[i + 1] ); if( id >= 0 ) mul[id] = INF; }
+
+                // Remove the root nodes (except the spur) from the graph.
+                for( size_t r = 0; r < i; ++r )
+                    for( const Edge& e : m_adj[root[r]] )
+                        mul[e.id] = INF;
+
+                std::vector<int> spurPath = aStar( spur, m_dstIdx, mul );
+                if( spurPath.empty() )
+                    continue;
+
+                std::vector<int> total( root.begin(), root.end() - 1 ); // drop dup spur
+                total.insert( total.end(), spurPath.begin(), spurPath.end() );
+
+                if( inA.count( total ) || inB.count( total ) )
+                    continue;
+                B.emplace_back( pathCost( total ), total );
+                inB.insert( total );
+            }
+
+            if( B.empty() )
+                break;
+            auto best = std::min_element( B.begin(), B.end(),
+                []( const auto& x, const auto& y ) { return x.first < y.first; } );
+            A.push_back( best->second );
+            inA.insert( best->second );
+            inB.erase( best->second );
+            B.erase( best );
+        }
+    }
+
+    // Convert node paths -> waypoint Paths (simplify + cost), dedup by geometry.
+    for( const std::vector<int>& nodes : A )
+    {
         Path p;
         std::vector<Waypoint> raw;
         for( int idx : nodes )
             raw.push_back( { m_nodes[idx].p, m_nodes[idx].layer } );
         p.waypoints = simplify( raw );
+        p.cost = pathCost( nodes );
 
         bool dup = false;
         for( const Path& q : result )
         {
-            if( q.waypoints.size() != p.waypoints.size() )
-                continue;
+            if( q.waypoints.size() != p.waypoints.size() ) continue;
             bool same = true;
             for( size_t i = 0; i < p.waypoints.size(); ++i )
                 if( dist( p.waypoints[i].p, q.waypoints[i].p ) > 1e-6
@@ -523,19 +591,8 @@ std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
                 { same = false; break; }
             if( same ) { dup = true; break; }
         }
-
-        double cost = 0.0;
-        for( size_t i = 0; i + 1 < nodes.size(); ++i )
-            for( const Edge& e : m_adj[nodes[i]] )
-                if( e.to == nodes[i + 1] ) { cost += m_edgeList[e.id].weight; break; }
-        p.cost = cost;
-
         if( !dup )
             result.push_back( std::move( p ) );
-
-        for( size_t i = 0; i + 1 < nodes.size(); ++i )
-            for( const Edge& e : m_adj[nodes[i]] )
-                if( e.to == nodes[i + 1] ) { mul[e.id] *= m_params.reusePenalty; break; }
     }
 
     std::sort( result.begin(), result.end(),
