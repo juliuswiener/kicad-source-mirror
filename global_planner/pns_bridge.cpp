@@ -207,18 +207,26 @@ RouteResult PnsBridge::routeAndCheck( const std::vector<gplan::Waypoint>& wps )
     }
 
     // Walk the intermediate waypoints. A layer change == drop a via there.
+    // A via only commits on a FixRoute (forceCommit=false keeps it speculative —
+    // it lands in the session node, not the board), after which the head
+    // continues on the new layer.
     for( size_t i = 1; i < wps.size(); ++i )
     {
+        VECTOR2I p = toV( wps[i] );
+
         if( wps[i].layer != wps[i - 1].layer )
         {
-            // Place a via and switch layer at this point. (PNS picks the via from
-            // the current sizes; SwitchLayer changes the active routing layer.)
-            m_router->ToggleViaPlacement();
-            m_router->Move( toV( wps[i] ), nullptr );
-            m_router->SwitchLayer( wps[i].layer );
-            m_router->ToggleViaPlacement();
+            m_router->Move( p, nullptr );                  // bring head to via site
+            if( !m_router->IsPlacingVia() )
+                m_router->ToggleViaPlacement();            // arm a via on the head
+            m_router->SwitchLayer( wps[i].layer );         // far side of the via
+            m_router->FixRoute( p, nullptr, false, false ); // commit seg + via
+            if( m_router->IsPlacingVia() )
+                m_router->ToggleViaPlacement();            // disarm
+            continue;                                       // head now on new layer
         }
-        m_router->Move( toV( wps[i] ), nullptr );
+
+        m_router->Move( p, nullptr );
     }
 
     // --- Evaluate (mirror of ROUTER::markViolations) -----------------------
@@ -261,6 +269,13 @@ RouteResult PnsBridge::routeAndCheck( const std::vector<gplan::Waypoint>& wps )
     PNS::LINE* head = traces.Size() ? static_cast<PNS::LINE*>( traces[0] ) : nullptr;
     bool reached = head && head->PointCount()
                    && ( head->CLine().CPoint( -1 ) - toV( wps.back() ) ).EuclideanNorm() < 1000;
+
+    // Count vias the route placed (proves the layer-change / via path ran).
+    PNS::NODE::ITEM_VECTOR removedItems, addedItems;
+    node->GetUpdatedItems( removedItems, addedItems );
+    for( PNS::ITEM* it : addedItems )
+        if( it->OfKind( PNS::ITEM::VIA_T ) )
+            r.vias++;
 
     r.ok = r.placed && reached && !r.collided;
     r.reason = m_router->FailureReason().ToStdString();

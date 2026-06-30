@@ -32,6 +32,7 @@ struct RouteResult
     bool        ok        = false;   // placed and reached, no residual collisions
     bool        collided  = false;   // placed but obstacles remain
     bool        placed    = false;   // PNS produced any geometry at all
+    int         vias      = 0;       // vias the route placed (layer changes)
     gplan::Point blocking;           // where it got stuck (for bumpCongestion)
     std::string reason;              // router->FailureReason()
 };

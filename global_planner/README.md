@@ -139,9 +139,14 @@ board loaded: 361 tracks, 72 footprints
 bridge attached, PNS world synced
 obstacles extracted: 739 (fixed=378, movable=361)
 gplan candidates for the net: 3
-routeAndCheck: ok=1 placed=1 collided=0      <-- real PNS shove route, clean
+routeAndCheck: ok=1 placed=1 vias=0 collided=0           <-- real PNS shove route, clean
+multilayer routeAndCheck: ok=1 placed=1 vias=1 collided=0 <-- F.Cu->via->B.Cu, clean
 SMOKETEST OK
 ```
+
+The multi-layer leg drops a real via (`vias=1`): the via commits on a mid-route
+`FixRoute` (kept speculative with `forceCommit=false`), after which the head
+continues on the new layer.
 
 Bugs found and fixed during runtime bring-up (all in the bridge, none in the core):
 - split `load()` (needs `BOARD_LOADER`/kiface) from `attach(BOARD*)` so hosts
@@ -150,7 +155,6 @@ Bugs found and fixed during runtime bring-up (all in the bridge, none in the cor
   `SetMode()` (else `Settings()` derefs null);
 - evaluate the routed **head** via `Traces()` (the head exists after `Move()`),
   not `HasPlacedAnything()` (only true after a fix/commit);
-- item pick falls back to a small slop radius.
-
-Remaining first-cut to confirm on multi-layer boards: the via sequence
-(`ToggleViaPlacement`/`SwitchLayer`).
+- item pick falls back to a small slop radius;
+- via sequence rewritten: a layer change does `Move` → arm via → `SwitchLayer`
+  → `FixRoute` (speculative), which actually places the via — verified `vias=1`.

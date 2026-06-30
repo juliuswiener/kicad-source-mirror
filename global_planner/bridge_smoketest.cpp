@@ -153,9 +153,28 @@ static int run( int argc, char** argv )
     if( !paths.empty() )
     {
         gbridge::RouteResult r = br.routeAndCheck( paths.front().waypoints );
-        std::printf( "routeAndCheck: ok=%d placed=%d collided=%d reason='%s'\n",
-                     r.ok, r.placed, r.collided, r.reason.c_str() );
+        std::printf( "routeAndCheck: ok=%d placed=%d vias=%d collided=%d reason='%s'\n",
+                     r.ok, r.placed, r.vias, r.collided, r.reason.c_str() );
     }
+
+    // --- forced multi-layer route: exercise the via path deterministically --
+    int bcu = br.pnsLayer( B_Cu );
+    VECTOR2I mid( ( pa.x + pb.x ) / 2, ( pa.y + pb.y ) / 2 );
+    std::vector<gplan::Waypoint> ml = {
+        { { (double) pa.x,  (double) pa.y  }, fcu },
+        { { (double) mid.x, (double) mid.y }, fcu },
+        { { (double) mid.x, (double) mid.y }, bcu },   // <- via here
+        { { (double) pb.x,  (double) pb.y  }, bcu },
+    };
+    std::printf( "multilayer route F.Cu(%d)->B.Cu(%d), via at (%d,%d)\n",
+                 fcu, bcu, mid.x, mid.y );
+    gbridge::RouteResult mr = br.routeAndCheck( ml );
+    std::printf( "multilayer routeAndCheck: ok=%d placed=%d vias=%d collided=%d reason='%s'\n",
+                 mr.ok, mr.placed, mr.vias, mr.collided, mr.reason.c_str() );
+    if( mr.placed && mr.vias >= 1 )
+        std::printf( "VIA PATH OK (%d via placed)\n", mr.vias );
+    else
+        std::printf( "VIA PATH: no via placed (placed=%d) — see notes\n", mr.placed );
 
     std::printf( "SMOKETEST OK\n" );
     return 0;
