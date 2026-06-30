@@ -834,3 +834,35 @@ RouteChange PnsBridge::dragComponent( double x, double y, double newX, double ne
     m_router->StopRouting();                // reset router state
     return rc;
 }
+
+// ---------------------------------------------------------------------------
+// Long-haul driver — checkpoint-insertion retry around route_and_commit.
+// ---------------------------------------------------------------------------
+RouteChange PnsBridge::routeLongHaul( const std::vector<gplan::Waypoint>& waypoints,
+                                      int maxInserts )
+{
+    std::vector<gplan::Waypoint> wp = waypoints;
+    RouteChange rc;
+    gplan::Point lastBlock{ 1e18, 1e18 };
+
+    for( int i = 0; i <= maxInserts; ++i )
+    {
+        rc = routeAndCommit( wp );
+        if( rc.reached )
+            return rc;                          // full route committed to world
+
+        // No progress vs the previous attempt's block point -> genuinely stuck.
+        double dx = rc.blocking.x - lastBlock.x, dy = rc.blocking.y - lastBlock.y;
+        if( std::sqrt( dx * dx + dy * dy ) < 1000.0 )   // < 1 um
+            break;
+        lastBlock = rc.blocking;
+
+        // Insert the farthest-reached point as a checkpoint before the target,
+        // on the start layer (a stable sub-goal for the next attempt).
+        gplan::Waypoint guide{ rc.blocking, wp.front().layer };
+        wp.insert( wp.end() - 1, guide );
+    }
+
+    rc.ok = false;                              // honest: never reached the target
+    return rc;
+}

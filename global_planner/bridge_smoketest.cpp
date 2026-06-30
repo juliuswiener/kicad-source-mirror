@@ -282,6 +282,17 @@ static int run( int argc, char** argv )
         }
     }
 
+    // --- routeLongHaul: checkpoint-retry driver -----------------------------
+    if( !paths.empty() )
+    {
+        gbridge::RouteChange l = br.routeLongHaul( paths.front().waypoints, 4 );
+        std::printf( "routeLongHaul: ok=%d reached=%d added=%zu blocking=(%.0f,%.0f)\n",
+                     l.ok, l.reached, l.addedSegs.size(), l.blocking.x, l.blocking.y );
+        if( !l.ok )
+        { std::printf( "LONGHAUL FAIL: net 1 should reach\n" ); return 1; }
+        std::printf( "LONGHAUL OK (reached)\n" );
+    }
+
     // --- T9: make net 1 unrouted (remove its tracks), find the ratsnest target
     //          via the bridge, and route the now-unrouted net. ----------------
     {

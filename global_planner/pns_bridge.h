@@ -178,6 +178,15 @@ public:
     RouteChange dragComponent( double x, double y, double newX, double newY,
                                bool allowViolations = false );
 
+    // Long-haul driver: route the waypoints with route_and_commit; if PNS can't
+    // reach the target in one shot (a long single leg fragments), insert the
+    // farthest-reached point as a CHECKPOINT waypoint and retry — giving PNS
+    // stable sub-goals with fresh budgets (AGENT_GUIDE §9). Up to `maxInserts`
+    // checkpoints. Returns the committed RouteChange (ok+reached) or, if it still
+    // can't reach, an honest ok=false with the final `blocking` point.
+    RouteChange routeLongHaul( const std::vector<gplan::Waypoint>& waypoints,
+                               int maxInserts = 6 );
+
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }
 
