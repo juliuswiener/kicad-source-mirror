@@ -169,8 +169,16 @@ Polygon offsetConvex( const Polygon& ccw, double d )
 Planner::Planner( std::vector<Obstacle> obstacles, PlannerParams params )
     : m_obstacles( std::move( obstacles ) ), m_params( params )
 {
+    // T3 — defensive parameter validation. Clamp rather than throw so a caller
+    // mistake degrades gracefully instead of aborting a routing run.
     if( m_params.layers.empty() )
         m_params.layers = { 0 };
+    if( m_params.kPaths < 1 )       m_params.kPaths = 1;
+    if( m_params.viaCost < 0 )      m_params.viaCost = 0;
+    if( m_params.clearance < 0 )    m_params.clearance = 0;
+    if( m_params.trackWidth <= 0 )  m_params.trackWidth = 1;   // nm; avoid 0-width margin
+    if( m_params.reusePenalty < 1 ) m_params.reusePenalty = 1; // <1 would reward reuse
+
     buildLayers();
 }
 
@@ -213,11 +221,13 @@ void Planner::buildLayers()
 
 void Planner::bumpCongestion( Point where, double radius, double factor )
 {
+    std::lock_guard<std::mutex> lk( m_mutex );   // T1
     m_bumps.push_back( { where, radius, factor } );
 }
 
 void Planner::clearCongestion()
 {
+    std::lock_guard<std::mutex> lk( m_mutex );   // T1
     m_bumps.clear();
 }
 
@@ -443,6 +453,7 @@ std::vector<Waypoint> simplify( const std::vector<Waypoint>& wps )
 
 std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
 {
+    std::lock_guard<std::mutex> lk( m_mutex );   // T1: guards graph rebuild + m_bumps
     buildNodes( start, sL, target, tL );
     buildEdges();
 

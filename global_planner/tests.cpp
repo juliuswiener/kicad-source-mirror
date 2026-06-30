@@ -4,8 +4,23 @@
 #include "planner_core.h"
 #include <cmath>
 #include <cstdio>
+#include <thread>
+#include <atomic>
+#include <vector>
 
 using namespace gplan;
+
+// point-in-polygon (test-local copy) for the T2 via-site invariant.
+static bool ptInPoly( Point p, const Polygon& poly )
+{
+    bool in = false; size_t n = poly.size();
+    for( size_t i = 0, j = n - 1; i < n; j = i++ )
+        if( ( ( poly[i].y > p.y ) != ( poly[j].y > p.y ) ) &&
+            ( p.x < ( poly[j].x - poly[i].x ) * ( p.y - poly[i].y )
+                        / ( poly[j].y - poly[i].y ) + poly[i].x ) )
+            in = !in;
+    return in;
+}
 
 static int g_pass = 0, g_fail = 0;
 #define CHECK( cond, msg ) do { \
@@ -181,6 +196,56 @@ int main()
         Planner pl( {}, base );
         auto paths = pl.plan( { 0, 0 }, { 5, 0 } );
         CHECK( paths.size() == 1, "no spurious duplicate paths in open field" );
+    }
+
+    // T3. Bad params are clamped, not fatal.
+    {
+        PlannerParams bad = base;
+        bad.kPaths = 0; bad.viaCost = -5; bad.clearance = -1; bad.reusePenalty = 0.1;
+        Planner pl( { { box( 5, 0, 3, 3 ), true, 0 } }, bad );
+        auto paths = pl.plan( { 0, 0 }, { 10, 0 } );
+        CHECK( !paths.empty(), "T3: bad params clamped, still routes" );
+    }
+
+    // T2. A via never lands inside a fixed hull (interior via-site rejection).
+    {
+        PlannerParams mp = base;
+        mp.layers = { 0, 1 };
+        mp.viaCost = 3.0;
+        std::vector<Obstacle> obs = {
+            { box( 5, 0, 2, 40 ), true, 0 },   // wall on L0 forces a via
+            { box( 0, 0, 1, 1 ), true, 1 },    // fixed pad on L1 over the (0,0) via column
+        };
+        Planner pl( obs, mp );
+        auto paths = pl.plan( { 0, 0 }, 0, { 10, 0 }, 0 );
+        bool viaInsideFixed = false;
+        for( const Path& p : paths )
+            for( size_t i = 1; i < p.waypoints.size(); ++i )
+                if( p.waypoints[i].layer != p.waypoints[i-1].layer )           // a via
+                    for( const Obstacle& o : obs )
+                        if( o.fixed && o.layer == p.waypoints[i].layer
+                            && ptInPoly( p.waypoints[i].p, o.poly ) )
+                            viaInsideFixed = true;
+        CHECK( !viaInsideFixed, "T2: no via lands inside a fixed hull" );
+    }
+
+    // T1. Concurrent plan()+bumpCongestion on ONE Planner: no crash, all valid.
+    {
+        Planner pl( { { box( 5, 0, 3, 3 ), true, 0 } }, base );
+        std::atomic<int> ok{ 0 }, bad{ 0 };
+        std::vector<std::thread> ts;
+        for( int t = 0; t < 8; ++t )
+            ts.emplace_back( [&]{
+                for( int i = 0; i < 50; ++i )
+                {
+                    auto paths = pl.plan( { 0, 0 }, { 10, 0 } );
+                    ( paths.empty() ? bad : ok )++;
+                    pl.bumpCongestion( { 5.0, 0.0 }, 1.0, 2.0 );
+                }
+            } );
+        for( auto& th : ts ) th.join();
+        pl.clearCongestion();
+        CHECK( bad == 0 && ok == 8 * 50, "T1: concurrent plan/bump safe + valid" );
     }
 
     std::printf( "\n%d passed, %d failed\n", g_pass, g_fail );

@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <vector>
 
 namespace gplan {
@@ -112,6 +113,10 @@ private:
     std::vector<Obstacle>       m_obstacles;
     PlannerParams               m_params;
     std::vector<CongestionBump> m_bumps;
+    // Guards the per-instance mutable state (m_bumps + the graph rebuilt in
+    // plan()). One Planner per worker is still the recommended pattern; this
+    // makes plan()/bumpCongestion safe to call concurrently on ONE instance.
+    mutable std::mutex          m_mutex;
 
     // Per-layer configuration-space data (keyed by layer id).
     struct LayerData
