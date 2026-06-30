@@ -18,6 +18,7 @@
 #include <layer_ids.h>
 #include <math/vector2d.h>
 #include <geometry/shape_line_chain.h>
+#include <geometry/shape_poly_set.h>
 #include <settings/settings_manager.h>
 
 #include <router/pns_router.h>
@@ -55,10 +56,42 @@ PnsBridge::~PnsBridge() = default;
 // BOARD_LOADER (the pcbnew kiface). Hosts that load boards themselves link only
 // this TU and call attach(), avoiding the kiface dependency.
 
+namespace {
+// T12 — map the bridge-local RouteMode to PNS_MODE (values mirror each other).
+PNS::PNS_MODE toPnsMode( gbridge::PnsBridge::RouteMode m )
+{
+    switch( m )
+    {
+    case gbridge::PnsBridge::RouteMode::MarkObstacles: return PNS::RM_MarkObstacles;
+    case gbridge::PnsBridge::RouteMode::Walkaround:    return PNS::RM_Walkaround;
+    case gbridge::PnsBridge::RouteMode::Shove:
+    default:                                           return PNS::RM_Shove;
+    }
+}
+} // namespace
+
+void PnsBridge::cleanup()                       // T10
+{
+    if( m_router )
+        m_router->ClearWorld();
+    m_router.reset();
+    m_iface.reset();
+    m_routingSettings.reset();
+    m_board = nullptr;
+}
+
+void PnsBridge::setMode( RouteMode m )          // T12
+{
+    m_mode = m;
+    if( m_router )
+        m_router->Settings().SetMode( toPnsMode( m_mode ) );
+}
+
 bool PnsBridge::attach( BOARD* board )
 {
     if( !board )
         return false;
+    cleanup();                                  // T10: re-attachable
     m_board = board;
 
     m_iface = std::make_unique<HeadlessIface>();
@@ -75,7 +108,7 @@ bool PnsBridge::attach( BOARD* board )
     m_router->ClearWorld();
     m_router->SyncWorld();
 
-    m_router->Settings().SetMode( PNS::RM_Shove );
+    m_router->Settings().SetMode( toPnsMode( m_mode ) );   // T12
     return true;
 }
 
@@ -98,6 +131,17 @@ gplan::Polygon bboxPoly( const BOX2I& b )
              { (double) b.GetRight(), (double) b.GetTop() },
              { (double) b.GetRight(), (double) b.GetBottom() },
              { (double) b.GetLeft(),  (double) b.GetBottom() } };
+}
+
+// T7 — convert a KiCad outline (SHAPE_LINE_CHAIN) to a gplan polygon. The core
+// convex-hulls fixed obstacles defensively, so emitting the raw effective-shape
+// outline (octagon/rounded-rect/etc.) is safe and far tighter than a bbox.
+gplan::Polygon outlineToGplan( const SHAPE_LINE_CHAIN& oc )
+{
+    gplan::Polygon gp;
+    for( int i = 0; i < oc.PointCount(); ++i )
+    { const VECTOR2I& p = oc.CPoint( i ); gp.push_back( { (double) p.x, (double) p.y } ); }
+    return gp;
 }
 
 // Exact swept rectangle of a track segment (movable, any shape is fine).
@@ -138,13 +182,18 @@ std::vector<gplan::Obstacle> PnsBridge::getObstacles( int pnsLayer ) const
         }
     }
 
-    // Pads -> FIXED.
+    // Pads -> FIXED (T7: real effective-shape hull, not a bounding box).
     for( FOOTPRINT* fp : m_board->Footprints() )
         for( PAD* pad : fp->Pads() )
             for( PCB_LAYER_ID bl : pad->GetLayerSet().CuStack() )
                 if( onLayer( pad, bl ) )
                 {
-                    out.push_back( { bboxPoly( pad->GetBoundingBox() ), true, pnsLayer } );
+                    const auto& poly = pad->GetEffectivePolygon( bl );
+                    if( poly && poly->OutlineCount() > 0
+                        && poly->Outline( 0 ).PointCount() >= 3 )
+                        out.push_back( { outlineToGplan( poly->Outline( 0 ) ), true, pnsLayer } );
+                    else
+                        out.push_back( { bboxPoly( pad->GetBoundingBox() ), true, pnsLayer } );
                     break;
                 }
 
@@ -157,6 +206,23 @@ std::vector<gplan::Obstacle> PnsBridge::getObstacles( int pnsLayer ) const
                     out.push_back( { bboxPoly( z->GetBoundingBox() ), true, pnsLayer } );
                     break;
                 }
+
+    // T8 — board outline as a thin FIXED boundary on this layer, so routes stay
+    // on-board (PNS would reject off-board anyway; this stops the planner even
+    // proposing them).
+    SHAPE_POLY_SET outline;
+    if( m_board->GetBoardPolygonOutlines( outline, true ) )
+        for( int o = 0; o < outline.OutlineCount(); ++o )
+        {
+            const SHAPE_LINE_CHAIN& oc = outline.Outline( o );
+            int npc = oc.PointCount();
+            for( int i = 0; i < npc; ++i )
+            {
+                const VECTOR2I& a = oc.CPoint( i );
+                const VECTOR2I& b = oc.CPoint( ( i + 1 ) % npc );
+                out.push_back( { trackPoly( a, b, 1000 ), true, pnsLayer } );  // ~1um wall
+            }
+        }
 
     return out;
 }
@@ -202,6 +268,7 @@ RouteResult PnsBridge::routeAndCheck( const std::vector<gplan::Waypoint>& wps )
                           VECTOR2D( startP.x, startP.y ) );
     m_router->UpdateSizes( sizes );
 
+    m_router->Settings().SetMode( toPnsMode( m_mode ) );   // T12: placer captures mode at start
     if( !m_router->StartRouting( startP, startItem, layer ) )
     {
         r.reason = m_router->FailureReason().ToStdString();
@@ -317,6 +384,7 @@ RouteGeom PnsBridge::routeAndExtract( const std::vector<gplan::Waypoint>& wps )
     if( startItem )
         g.netcode = m_iface->GetNetCode( startItem->Net() );
 
+    m_router->Settings().SetMode( toPnsMode( m_mode ) );   // T12
     if( !m_router->StartRouting( startP, startItem, layer ) )
     {
         g.reason = m_router->FailureReason().ToStdString();
@@ -407,6 +475,21 @@ RouteGeom PnsBridge::routeAndExtract( const std::vector<gplan::Waypoint>& wps )
 
     g.placed = !g.segs.empty();
 
+    // Reached the target? Require an added segment ENDPOINT to land on the target
+    // point AND on the target's board layer — XY alone gives false positives when
+    // the pad is on the far copper side (e.g. a flipped QFN on B.Cu). Tol 0.05 mm.
+    int      tgtBL = m_iface->GetBoardLayerFromPNSLayer( wps.back().layer );
+    VECTOR2I tgt   = toV( wps.back() );
+    bool     reached = false;
+    for( const std::vector<double>& s : g.segs )
+    {
+        if( (int) s[5] != tgtBL )
+            continue;
+        double dA = std::hypot( s[0] - tgt.x, s[1] - tgt.y );
+        double dB = std::hypot( s[2] - tgt.x, s[3] - tgt.y );
+        if( dA < 50000 || dB < 50000 ) { reached = true; break; }
+    }
+
     // Residual collisions against the sealed node (same check as routeAndCheck).
     for( PNS::ITEM* it : addedItems )
     {
@@ -415,7 +498,7 @@ RouteGeom PnsBridge::routeAndExtract( const std::vector<gplan::Waypoint>& wps )
         if( !obs.empty() ) { g.collided = true; break; }
     }
 
-    g.ok = g.placed && !g.collided;
+    g.ok = g.placed && reached && !g.collided;
     g.reason = m_router->FailureReason().ToStdString();
 
     // Discard the session — host applies g.segs / g.viaList to the board itself.

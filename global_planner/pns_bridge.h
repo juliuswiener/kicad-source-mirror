@@ -75,7 +75,17 @@ public:
     // Routing setup against an already-loaded BOARD (its DRC engine must already
     // be initialized). Does NOT depend on BOARD_LOADER — use when the host has
     // its own board-loading path. Builds the iface/router and syncs the world.
+    // Re-callable: tears down any previous attach first (T10).
     bool attach( BOARD* board );
+
+    // T10 — release the router/iface/settings so the bridge can be re-attached
+    // to another board in the same process. Called automatically by attach().
+    void cleanup();
+
+    // T12 — PNS routing mode. Values mirror PNS_MODE; mapped in the .cpp so the
+    // PNS header stays out of this public header. Default = Shove (unchanged).
+    enum class RouteMode { MarkObstacles = 0, Shove = 1, Walkaround = 2 };
+    void setMode( RouteMode mode );
 
     // Map a KiCad copper layer (PCB_LAYER_ID int) to/from a PNS layer index.
     int  pnsLayer( int boardLayer ) const;
@@ -108,6 +118,7 @@ private:
     std::unique_ptr<PNS_KICAD_IFACE_BASE> m_iface;
     std::unique_ptr<PNS::ROUTER>          m_router;
     std::unique_ptr<PNS::ROUTING_SETTINGS> m_routingSettings;
+    RouteMode                             m_mode = RouteMode::Shove;   // T12
 };
 
 } // namespace gbridge

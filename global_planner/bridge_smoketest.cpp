@@ -197,6 +197,30 @@ static int run( int argc, char** argv )
             std::printf( "EXTRACT: nothing returned (placed=%d)\n", g.placed );
     }
 
+    // --- T12: route the same net under Walkaround as well as Shove ----------
+    if( !paths.empty() )
+    {
+        br.setMode( gbridge::PnsBridge::RouteMode::Walkaround );
+        gbridge::RouteResult wr = br.routeAndCheck( paths.front().waypoints );
+        std::printf( "T12 walkaround routeAndCheck: ok=%d placed=%d collided=%d reason='%s'\n",
+                     wr.ok, wr.placed, wr.collided, wr.reason.c_str() );
+        br.setMode( gbridge::PnsBridge::RouteMode::Shove );   // restore default
+        if( !wr.placed )
+        { std::printf( "T12 FAIL: walkaround placed nothing\n" ); return 1; }
+    }
+
+    // --- T10: cleanup + re-attach to the same board + route again -----------
+    if( !paths.empty() )
+    {
+        br.cleanup();
+        if( !br.attach( board.get() ) )
+        { std::printf( "T10 FAIL: re-attach\n" ); return 1; }
+        gbridge::RouteResult rr = br.routeAndCheck( paths.front().waypoints );
+        std::printf( "T10 re-attach routeAndCheck: ok=%d placed=%d\n", rr.ok, rr.placed );
+        if( !rr.placed )
+        { std::printf( "T10 FAIL: route after re-attach placed nothing\n" ); return 1; }
+    }
+
     std::printf( "SMOKETEST OK\n" );
     return 0;
 }

@@ -77,9 +77,16 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "removed_segs", &RouteGeom::removedSegs )
         .def_readonly( "removed_vias", &RouteGeom::removedVias );
 
-    py::class_<PnsBridge>( m, "PnsBridge" )
+    auto bridge = py::class_<PnsBridge>( m, "PnsBridge" );
+    py::enum_<PnsBridge::RouteMode>( bridge, "RouteMode" )   // T12
+        .value( "MARK_OBSTACLES", PnsBridge::RouteMode::MarkObstacles )
+        .value( "SHOVE",          PnsBridge::RouteMode::Shove )
+        .value( "WALKAROUND",     PnsBridge::RouteMode::Walkaround );
+    bridge
         .def( py::init<>() )
         .def( "load", &PnsBridge::load, py::arg( "pcb_path" ) )
+        .def( "cleanup", &PnsBridge::cleanup )                // T10
+        .def( "set_mode", &PnsBridge::setMode, py::arg( "mode" ) )   // T12
         .def( "pns_layer", &PnsBridge::pnsLayer, py::arg( "board_layer" ) )
         .def( "get_obstacles", &PnsBridge::getObstacles, py::arg( "pns_layer" ) )
         .def( "get_all_obstacles", &PnsBridge::getAllObstacles )
