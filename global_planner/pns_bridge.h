@@ -103,6 +103,23 @@ struct TargetProbe
     double nearestOther    = -1.0;    // nearest foreign on the adjacent layer (escape hint)
 };
 
+// Speculative component-drag probe (tries a move WITHOUT committing).
+struct DragProbe
+{
+    bool   clean = false;   // the move resolves with no residual collision
+    double cost  = -1.0;    // total length of the reshaped connected tracks (less = better)
+    int    shoved = 0;      // number of track segments the move disturbed
+};
+
+// Result of a router-driven component-placement search (probe candidates, commit best).
+struct ShoveResult
+{
+    bool        committed = false;   // a clean candidate was found AND committed
+    double      x = 0.0, y = 0.0;    // chosen new position
+    double      cost = -1.0;
+    RouteChange change;              // the committed change stream (when committed)
+};
+
 class PnsBridge
 {
 public:
@@ -186,6 +203,18 @@ public:
     // can't reach, an honest ok=false with the final `blocking` point.
     RouteChange routeLongHaul( const std::vector<gplan::Waypoint>& waypoints,
                                int maxInserts = 6 );
+
+    // Speculative component drag: move the component at (x,y) to (newX,newY),
+    // evaluate the result (clean? track-length cost?), then DISCARD it (commits
+    // nothing). The primitive for a placement search.
+    DragProbe probeDrag( double x, double y, double newX, double newY );
+
+    // Router-driven component shoving: probe each candidate position, keep the
+    // cleanest/cheapest, and commit that one. `candidates` is a list of {nx,ny}.
+    // Returns the chosen position + committed change (or committed=false if no
+    // candidate resolves cleanly).
+    ShoveResult shoveComponentSearch( double x, double y,
+                                      const std::vector<std::vector<double>>& candidates );
 
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }

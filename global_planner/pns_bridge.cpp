@@ -34,6 +34,7 @@
 #include <geometry/shape.h>
 #include <router/pns_node.h>
 #include <router/pns_placement_algo.h>
+#include <router/pns_drag_algo.h>
 #include <router/pns_layerset.h>
 
 using namespace gbridge;
@@ -865,4 +866,77 @@ RouteChange PnsBridge::routeLongHaul( const std::vector<gplan::Waypoint>& waypoi
 
     rc.ok = false;                              // honest: never reached the target
     return rc;
+}
+
+// ---------------------------------------------------------------------------
+// Speculative component drag (try a move, evaluate, discard — no commit).
+// ---------------------------------------------------------------------------
+DragProbe PnsBridge::probeDrag( double x, double y, double newX, double newY )
+{
+    DragProbe pr;
+    VECTOR2I p(  (int) std::lround( x ),    (int) std::lround( y ) );
+    VECTOR2I np( (int) std::lround( newX ), (int) std::lround( newY ) );
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( p );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( p, 200000 );
+    PNS::ITEM* seed = nullptr;
+    for( PNS::ITEM* it : hits.Items() )
+        if( it->OfKind( PNS::ITEM::SOLID_T ) ) { seed = it; break; }
+    if( !seed )
+        seed = hits.Empty() ? nullptr : hits[0];
+    if( !seed )
+        return pr;
+    if( seed->Parent() )
+        if( FOOTPRINT* fp = seed->Parent()->GetParentFootprint() )
+            if( fp->IsLocked() )
+                return pr;                      // locked: never movable
+
+    if( !m_router->StartDragging( p, seed, PNS::DM_COMPONENT ) )
+        return pr;
+    m_router->Move( np, nullptr );
+
+    PNS::DRAG_ALGO* dr = m_router->GetDragger();
+    PNS::NODE* node = dr ? dr->CurrentNode() : nullptr;
+    if( node )
+    {
+        PNS::ITEM_SET traces = dr->Traces();
+        pr.clean = !node->CheckColliding( traces );
+        double len = 0; int n = 0;
+        for( PNS::ITEM* it : traces.Items() )
+            if( it->OfKind( PNS::ITEM::SEGMENT_T ) )
+            { len += static_cast<PNS::SEGMENT*>( it )->Seg().Length(); ++n; }
+        pr.cost = len;
+        pr.shoved = n;
+    }
+
+    m_router->StopRouting();                    // DISCARD — speculative only
+    return pr;
+}
+
+// ---------------------------------------------------------------------------
+// Router-driven component shoving: probe candidates, commit the best one.
+// ---------------------------------------------------------------------------
+ShoveResult PnsBridge::shoveComponentSearch( double x, double y,
+                                  const std::vector<std::vector<double>>& candidates )
+{
+    ShoveResult best;
+    double bestCost = 1e18, bx = 0, by = 0;
+    bool any = false;
+
+    for( const std::vector<double>& c : candidates )
+    {
+        if( c.size() < 2 )
+            continue;
+        DragProbe pr = probeDrag( x, y, c[0], c[1] );
+        if( pr.clean && pr.cost >= 0 && pr.cost < bestCost )
+        { bestCost = pr.cost; bx = c[0]; by = c[1]; any = true; }
+    }
+    if( !any )
+        return best;
+
+    best.change     = dragComponent( x, y, bx, by, false );   // commit the winner
+    best.committed  = best.change.ok;
+    best.x = bx; best.y = by; best.cost = bestCost;
+    return best;
 }

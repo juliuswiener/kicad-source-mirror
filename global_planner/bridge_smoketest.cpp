@@ -279,6 +279,23 @@ static int run( int argc, char** argv )
             if( d2.ok || d2.reason != std::string( "component locked" ) )
             { std::printf( "LOCK FAIL: locked component was not refused\n" ); return 1; }
             std::printf( "LOCK OK (locked component refused)\n" );
+
+            // Speculative probe (no commit) — a zero move must be clean.
+            gbridge::DragProbe pz = br.probeDrag( c.x, c.y, c.x, c.y );
+            std::printf( "probeDrag(zero move): clean=%d cost=%.0f shoved=%d\n",
+                         pz.clean, pz.cost, pz.shoved );
+            if( !pz.clean )
+            { std::printf( "PROBE-DRAG FAIL: zero move not clean\n" ); return 1; }
+
+            // Router-driven placement search: probe candidates, commit the best.
+            std::vector<std::vector<double>> cands = {
+                { (double)( c.x + 30000 ), (double) c.y },
+                { (double) c.x, (double)( c.y + 30000 ) },
+                { (double)( c.x - 30000 ), (double) c.y } };
+            gbridge::ShoveResult sr = br.shoveComponentSearch( c.x, c.y, cands );
+            std::printf( "shoveComponentSearch: committed=%d chosen=(%.0f,%.0f) cost=%.0f\n",
+                         sr.committed, sr.x, sr.y, sr.cost );
+            std::printf( "SHOVE-SEARCH ran\n" );
         }
     }
 

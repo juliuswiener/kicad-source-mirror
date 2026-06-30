@@ -101,6 +101,18 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "foreign_net", &TargetProbe::foreignNet )
         .def_readonly( "nearest_other", &TargetProbe::nearestOther );
 
+    py::class_<DragProbe>( m, "DragProbe" )
+        .def_readonly( "clean", &DragProbe::clean )
+        .def_readonly( "cost", &DragProbe::cost )
+        .def_readonly( "shoved", &DragProbe::shoved );
+
+    py::class_<ShoveResult>( m, "ShoveResult" )
+        .def_readonly( "committed", &ShoveResult::committed )
+        .def_readonly( "x", &ShoveResult::x )
+        .def_readonly( "y", &ShoveResult::y )
+        .def_readonly( "cost", &ShoveResult::cost )
+        .def_readonly( "change", &ShoveResult::change );
+
     auto bridge = py::class_<PnsBridge>( m, "PnsBridge" );
     py::enum_<PnsBridge::RouteMode>( bridge, "RouteMode" )   // T12
         .value( "MARK_OBSTACLES", PnsBridge::RouteMode::MarkObstacles )
@@ -126,5 +138,9 @@ PYBIND11_MODULE( gplan_kicad, m )
               py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ),
               py::arg( "allow_violations" ) = false )
         .def( "route_long_haul", &PnsBridge::routeLongHaul,
-              py::arg( "waypoints" ), py::arg( "max_inserts" ) = 6 );
+              py::arg( "waypoints" ), py::arg( "max_inserts" ) = 6 )
+        .def( "probe_drag", &PnsBridge::probeDrag,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ) )
+        .def( "shove_component_search", &PnsBridge::shoveComponentSearch,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "candidates" ) );
 }
