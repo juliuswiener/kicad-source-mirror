@@ -37,6 +37,30 @@ struct RouteResult
     std::string reason;              // router->FailureReason()
 };
 
+// Routed geometry extracted from a successful PNS route (board units = nm).
+// Layers are KiCad PCB_LAYER_ID ints. The host turns these into PCB_TRACK /
+// PCB_VIA on the board; nothing here mutates the BOARD.
+struct RouteGeom
+{
+    bool ok        = false;
+    bool collided  = false;
+    bool placed    = false;
+    int  vias      = 0;
+    int  netcode   = -1;
+    std::string reason;
+    // ADDED items (the new route + shoved neighbours at their NEW positions).
+    // each seg: { x1, y1, x2, y2, width, boardLayer }
+    std::vector<std::vector<double>> segs;
+    std::vector<std::string>         segNets;   // parallel to segs (net name)
+    // each via: { x, y, diameter, drill, boardLayerTop, boardLayerBottom }
+    std::vector<std::vector<double>> viaList;
+    std::vector<std::string>         viaNets;   // parallel to viaList (net name)
+    // REMOVED items (shoved neighbours at their OLD positions — the host must
+    // delete these from the board so the shove is realized, not duplicated).
+    std::vector<std::vector<double>> removedSegs;   // x1,y1,x2,y2,width,boardLayer
+    std::vector<std::vector<double>> removedVias;   // x,y,boardLayerTop,boardLayerBottom
+};
+
 class PnsBridge
 {
 public:
@@ -67,6 +91,12 @@ public:
     // Drive PNS along the planned waypoints (shove mode) and report the outcome.
     // waypoints carry layers; a layer change is realized as a via (see .cpp).
     RouteResult routeAndCheck( const std::vector<gplan::Waypoint>& waypoints );
+
+    // Like routeAndCheck, but on success also returns the routed geometry
+    // (shoved segments + vias) so the host can write it to a board. The geometry
+    // is sealed into the PNS session node only — the BOARD is NOT mutated (host
+    // applies segs/vias itself, keeping board edits auditable). See .cpp.
+    RouteGeom routeAndExtract( const std::vector<gplan::Waypoint>& waypoints );
 
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }

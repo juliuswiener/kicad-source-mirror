@@ -16,13 +16,43 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <wx/init.h>
+#include <pgm_base.h>
+
 #include "pns_bridge.h"
 
 namespace py = pybind11;
 using namespace gbridge;
 
+// Minimal concrete PGM_BASE so Pgm() is valid when the bridge is hosted inside a
+// Python process (no KiCad main()). Mirrors the SMOKE_PGM bootstrap that
+// bridge_smoketest.cpp does in main(): wx init + headless InitPgm, run once at
+// module import.
+namespace {
+struct GPLAN_PGM : public PGM_BASE
+{
+    void MacOpenFile( const wxString& ) override {}
+};
+GPLAN_PGM s_pgm;
+
+void bootstrap_once()
+{
+    static bool done = false;
+    if( done )
+        return;
+    done = true;
+
+    wxInitialize();
+    wxDisableAsserts();        // headless: never block on a wx assert dialog
+    SetPgm( &s_pgm );
+    Pgm().InitPgm( /*aHeadless=*/ true, /*aIsUnitTest=*/ true );
+}
+} // namespace
+
 PYBIND11_MODULE( gplan_kicad, m )
 {
+    bootstrap_once();
+
     m.doc() = "KiCad-linked PNS bridge for the gplan global planner.";
 
     py::class_<RouteResult>( m, "RouteResult" )
@@ -33,11 +63,26 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "blocking", &RouteResult::blocking )
         .def_readonly( "reason", &RouteResult::reason );
 
+    py::class_<RouteGeom>( m, "RouteGeom" )
+        .def_readonly( "ok", &RouteGeom::ok )
+        .def_readonly( "collided", &RouteGeom::collided )
+        .def_readonly( "placed", &RouteGeom::placed )
+        .def_readonly( "vias", &RouteGeom::vias )
+        .def_readonly( "netcode", &RouteGeom::netcode )
+        .def_readonly( "reason", &RouteGeom::reason )
+        .def_readonly( "segs", &RouteGeom::segs )
+        .def_readonly( "seg_nets", &RouteGeom::segNets )
+        .def_readonly( "via_list", &RouteGeom::viaList )
+        .def_readonly( "via_nets", &RouteGeom::viaNets )
+        .def_readonly( "removed_segs", &RouteGeom::removedSegs )
+        .def_readonly( "removed_vias", &RouteGeom::removedVias );
+
     py::class_<PnsBridge>( m, "PnsBridge" )
         .def( py::init<>() )
         .def( "load", &PnsBridge::load, py::arg( "pcb_path" ) )
         .def( "pns_layer", &PnsBridge::pnsLayer, py::arg( "board_layer" ) )
         .def( "get_obstacles", &PnsBridge::getObstacles, py::arg( "pns_layer" ) )
         .def( "get_all_obstacles", &PnsBridge::getAllObstacles )
-        .def( "route_and_check", &PnsBridge::routeAndCheck, py::arg( "waypoints" ) );
+        .def( "route_and_check", &PnsBridge::routeAndCheck, py::arg( "waypoints" ) )
+        .def( "route_and_extract", &PnsBridge::routeAndExtract, py::arg( "waypoints" ) );
 }

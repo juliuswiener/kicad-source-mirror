@@ -26,6 +26,8 @@
 #include <router/pns_sizes_settings.h>
 #include <router/pns_itemset.h>
 #include <router/pns_line.h>
+#include <router/pns_segment.h>
+#include <router/pns_via.h>
 #include <router/pns_node.h>
 #include <router/pns_placement_algo.h>
 
@@ -283,4 +285,140 @@ RouteResult PnsBridge::routeAndCheck( const std::vector<gplan::Waypoint>& wps )
     // Discard everything — this is a speculative trial, commit nothing.
     m_router->StopRouting();
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// Route + extract geometry (same shove as routeAndCheck, but returns the
+// resulting segments + vias so the host can apply them to a board).
+// ---------------------------------------------------------------------------
+RouteGeom PnsBridge::routeAndExtract( const std::vector<gplan::Waypoint>& wps )
+{
+    RouteGeom g;
+    if( wps.size() < 2 )
+        return g;
+
+    auto toV = []( const gplan::Waypoint& w )
+    { return VECTOR2I( (int) std::lround( w.p.x ), (int) std::lround( w.p.y ) ); };
+
+    VECTOR2I startP = toV( wps.front() );
+    int      layer  = wps.front().layer;
+
+    PNS::ITEM_SET startHits = m_router->QueryHoverItems( startP );
+    if( startHits.Empty() )
+        startHits = m_router->QueryHoverItems( startP, 100000 );
+    PNS::ITEM* startItem = startHits.Empty() ? nullptr : startHits[0];
+
+    PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
+    m_iface->SetStartLayerFromPNS( layer );
+    m_iface->ImportSizes( sizes, startItem, startItem ? startItem->Net() : nullptr,
+                          VECTOR2D( startP.x, startP.y ) );
+    m_router->UpdateSizes( sizes );
+
+    if( startItem )
+        g.netcode = m_iface->GetNetCode( startItem->Net() );
+
+    if( !m_router->StartRouting( startP, startItem, layer ) )
+    {
+        g.reason = m_router->FailureReason().ToStdString();
+        return g;
+    }
+
+    for( size_t i = 1; i < wps.size(); ++i )
+    {
+        VECTOR2I p = toV( wps[i] );
+        if( wps[i].layer != wps[i - 1].layer )
+        {
+            m_router->Move( p, nullptr );
+            if( !m_router->IsPlacingVia() )
+                m_router->ToggleViaPlacement();
+            m_router->SwitchLayer( wps[i].layer );
+            m_router->FixRoute( p, nullptr, false, false );
+            if( m_router->IsPlacingVia() )
+                m_router->ToggleViaPlacement();
+            continue;
+        }
+        m_router->Move( p, nullptr );
+    }
+
+    // Seal the remaining head segments into the session node (forceFinish=true,
+    // forceCommit=false → lands in the node, NOT the board) so the full route is
+    // enumerable below.
+    m_router->FixRoute( toV( wps.back() ), nullptr, true, false );
+
+    PNS::PLACEMENT_ALGO* placer = m_router->Placer();
+    PNS::NODE*           node   = placer ? placer->CurrentNode( true ) : nullptr;
+    if( !node )
+    {
+        g.reason = m_router->FailureReason().ToStdString();
+        m_router->StopRouting();
+        return g;
+    }
+
+    PNS::NODE::ITEM_VECTOR removedItems, addedItems;
+    node->GetUpdatedItems( removedItems, addedItems );
+
+    for( PNS::ITEM* it : addedItems )
+    {
+        if( it->OfKind( PNS::ITEM::SEGMENT_T ) )
+        {
+            auto* s = static_cast<PNS::SEGMENT*>( it );
+            const SEG& sg = s->Seg();
+            int bl = m_iface->GetBoardLayerFromPNSLayer( s->Layer() );
+            g.segs.push_back( { (double) sg.A.x, (double) sg.A.y,
+                                (double) sg.B.x, (double) sg.B.y,
+                                (double) s->Width(), (double) bl } );
+            g.segNets.push_back( m_iface->GetNetName( s->Net() ).ToStdString() );
+        }
+        else if( it->OfKind( PNS::ITEM::VIA_T ) )
+        {
+            auto* v = static_cast<PNS::VIA*>( it );
+            int top = m_iface->GetBoardLayerFromPNSLayer( v->Layers().Start() );
+            int bot = m_iface->GetBoardLayerFromPNSLayer( v->Layers().End() );
+            g.viaList.push_back( { (double) v->Pos().x, (double) v->Pos().y,
+                                   (double) v->Diameter( v->Layers().Start() ),
+                                   (double) v->Drill(), (double) top, (double) bot } );
+            g.viaNets.push_back( m_iface->GetNetName( v->Net() ).ToStdString() );
+            g.vias++;
+        }
+    }
+
+    // REMOVED items: shoved neighbours at their old positions. The host deletes
+    // these so the shove is realized instead of duplicated.
+    for( PNS::ITEM* it : removedItems )
+    {
+        if( it->OfKind( PNS::ITEM::SEGMENT_T ) )
+        {
+            auto* s = static_cast<PNS::SEGMENT*>( it );
+            const SEG& sg = s->Seg();
+            int bl = m_iface->GetBoardLayerFromPNSLayer( s->Layer() );
+            g.removedSegs.push_back( { (double) sg.A.x, (double) sg.A.y,
+                                       (double) sg.B.x, (double) sg.B.y,
+                                       (double) s->Width(), (double) bl } );
+        }
+        else if( it->OfKind( PNS::ITEM::VIA_T ) )
+        {
+            auto* v = static_cast<PNS::VIA*>( it );
+            int top = m_iface->GetBoardLayerFromPNSLayer( v->Layers().Start() );
+            int bot = m_iface->GetBoardLayerFromPNSLayer( v->Layers().End() );
+            g.removedVias.push_back( { (double) v->Pos().x, (double) v->Pos().y,
+                                       (double) top, (double) bot } );
+        }
+    }
+
+    g.placed = !g.segs.empty();
+
+    // Residual collisions against the sealed node (same check as routeAndCheck).
+    for( PNS::ITEM* it : addedItems )
+    {
+        PNS::NODE::OBSTACLES obs;
+        node->QueryColliding( it, obs );
+        if( !obs.empty() ) { g.collided = true; break; }
+    }
+
+    g.ok = g.placed && !g.collided;
+    g.reason = m_router->FailureReason().ToStdString();
+
+    // Discard the session — host applies g.segs / g.viaList to the board itself.
+    m_router->StopRouting();
+    return g;
 }

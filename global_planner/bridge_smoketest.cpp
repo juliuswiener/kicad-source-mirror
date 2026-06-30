@@ -176,6 +176,27 @@ static int run( int argc, char** argv )
     else
         std::printf( "VIA PATH: no via placed (placed=%d) — see notes\n", mr.placed );
 
+    // --- routeAndExtract: get the routed geometry back for the host to apply ---
+    if( !paths.empty() )
+    {
+        gbridge::RouteGeom g = br.routeAndExtract( paths.front().waypoints );
+        std::printf( "routeAndExtract: ok=%d placed=%d net=%d segs=%zu vias=%zu "
+                     "removedSegs=%zu removedVias=%zu reason='%s'\n",
+                     g.ok, g.placed, g.netcode, g.segs.size(), g.viaList.size(),
+                     g.removedSegs.size(), g.removedVias.size(), g.reason.c_str() );
+        if( !g.segs.empty() )
+        {
+            const auto& s = g.segs.front();   // {x1,y1,x2,y2,width,boardLayer}
+            std::printf( "  first seg: (%.0f,%.0f)->(%.0f,%.0f) w=%.0f layer=%.0f\n",
+                         s[0], s[1], s[2], s[3], s[4], s[5] );
+        }
+        if( g.placed && !g.segs.empty() )
+            std::printf( "EXTRACT OK (%zu segs, %zu vias returned)\n",
+                         g.segs.size(), g.viaList.size() );
+        else
+            std::printf( "EXTRACT: nothing returned (placed=%d)\n", g.placed );
+    }
+
     std::printf( "SMOKETEST OK\n" );
     return 0;
 }
