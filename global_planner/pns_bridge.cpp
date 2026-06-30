@@ -770,3 +770,54 @@ TargetProbe PnsBridge::probeTarget( double x, double y, int layer, int net,
         tp.nearestOther = bestOther;
     return tp;
 }
+
+// ---------------------------------------------------------------------------
+// Shove a component (footprint + connected tracks) — connectivity-preserving.
+// ---------------------------------------------------------------------------
+RouteChange PnsBridge::dragComponent( double x, double y, double newX, double newY,
+                                      bool allowViolations )
+{
+    RouteChange rc;
+    VECTOR2I p(  (int) std::lround( x ),    (int) std::lround( y ) );
+    VECTOR2I np( (int) std::lround( newX ), (int) std::lround( newY ) );
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( p );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( p, 200000 );
+    PNS::ITEM* seed = hits.Empty() ? nullptr : hits[0];
+    if( !seed )
+    { rc.reason = "no item at drag point"; return rc; }
+
+    if( !m_router->StartDragging( p, seed, PNS::DM_COMPONENT ) )
+    { rc.reason = m_router->FailureReason().ToStdString(); return rc; }
+
+    m_router->Move( np, nullptr );          // moveDragging -> shove neighbours
+
+    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
+    hi->clearChanges();
+    // FixRoute(aForceCommit=allowViolations): the COMPONENT_DRAGGER commits only
+    // if the drag is clean (or violations are explicitly allowed). A clean commit
+    // emits the parent-matched change stream into HeadlessIface + persists world.
+    bool committed = m_router->FixRoute( np, nullptr, false, allowViolations );
+
+    if( committed )
+    {
+        RouteChange& ch = hi->changes;
+        rc.addedSegs   = ch.addedSegs;   rc.addedVias = ch.addedVias;
+        rc.modSegUuids = ch.modSegUuids; rc.modSegs   = ch.modSegs;
+        rc.modViaUuids = ch.modViaUuids; rc.modVias   = ch.modVias;
+        rc.removedUuids = ch.removedUuids;
+        rc.vias    = static_cast<int>( ch.addedVias.size() );
+        rc.placed  = !rc.addedSegs.empty() || !rc.modSegs.empty() || !rc.modVias.empty();
+        rc.ok      = true;
+        rc.reached = true;
+    }
+    else
+    {
+        rc.ok = false;
+        rc.reason = "component drag would violate clearance (shove not clean)";
+    }
+
+    m_router->StopRouting();                // reset router state
+    return rc;
+}

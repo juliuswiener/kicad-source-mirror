@@ -121,5 +121,8 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def( "route_and_commit", &PnsBridge::routeAndCommit, py::arg( "waypoints" ) )
         .def( "probe_target", &PnsBridge::probeTarget,
               py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ),
-              py::arg( "net" ), py::arg( "clearance" ), py::arg( "other_pns_layer" ) );
+              py::arg( "net" ), py::arg( "clearance" ), py::arg( "other_pns_layer" ) )
+        .def( "drag_component", &PnsBridge::dragComponent,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ),
+              py::arg( "allow_violations" ) = false );
 }

@@ -253,6 +253,27 @@ static int run( int argc, char** argv )
         std::printf( "PROBE OK\n" );
     }
 
+    // --- dragComponent: shove a footprint + its tracks (connectivity-safe) ---
+    {
+        VECTOR2I seed; bool haveSeed = false;
+        for( FOOTPRINT* fp : board->Footprints() )      // seed from a real pad (has copper)
+        {
+            for( PAD* pad : fp->Pads() )
+                if( pad->IsOnLayer( F_Cu ) ) { seed = pad->GetPosition(); haveSeed = true; break; }
+            if( haveSeed ) break;
+        }
+        if( haveSeed )
+        {
+            VECTOR2I c = seed;
+            gbridge::RouteChange d = br.dragComponent( c.x, c.y, c.x + 50000, c.y, false );
+            std::printf( "dragComponent (+0.05mm): ok=%d placed=%d modSegs=%zu reason='%s'\n",
+                         d.ok, d.placed, d.modSegs.size(), d.reason.c_str() );
+            // board-dependent whether a clean drag exists here; just require it
+            // RAN and returned a verdict without crashing.
+            std::printf( "DRAG ran (clean=%d)\n", d.ok );
+        }
+    }
+
     // --- T9: make net 1 unrouted (remove its tracks), find the ratsnest target
     //          via the bridge, and route the now-unrouted net. ----------------
     {

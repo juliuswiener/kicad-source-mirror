@@ -168,6 +168,16 @@ public:
     TargetProbe probeTarget( double x, double y, int pnsLayer, int net,
                              double clearance, int otherPnsLayer );
 
+    // Shove a whole component (footprint + its connected tracks) so its item at
+    // (x,y) moves to (newX,newY), keeping connectivity (PNS COMPONENT_DRAGGER).
+    // With allowViolations=false (default) it commits to the world ONLY if the
+    // move is clean — i.e. it never endangers connections. Returns the dragged-
+    // track change stream (host moves the footprint by (newX-x,newY-y) itself and
+    // applies these track mods by UUID). ok=false (nothing committed) if the
+    // shove can't be done cleanly.
+    RouteChange dragComponent( double x, double y, double newX, double newY,
+                               bool allowViolations = false );
+
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }
 
