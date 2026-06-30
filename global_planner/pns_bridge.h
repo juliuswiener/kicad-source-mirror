@@ -22,7 +22,7 @@
 
 class BOARD;
 class SETTINGS_MANAGER;
-namespace PNS { class ROUTER; class ITEM; }
+namespace PNS { class ROUTER; class ITEM; class ROUTING_SETTINGS; }
 class PNS_KICAD_IFACE_BASE;
 
 namespace gbridge {
@@ -44,8 +44,13 @@ public:
 
     // Loads board + project (.kicad_pro) + custom rules (.kicad_dru) by the
     // usual filename convention, builds the DRC engine, and syncs the PNS world.
-    // Returns false on failure.
+    // Returns false on failure. (Links BOARD_LOADER -> pcbnew kiface objects.)
     bool load( const std::string& pcbPath );
+
+    // Routing setup against an already-loaded BOARD (its DRC engine must already
+    // be initialized). Does NOT depend on BOARD_LOADER — use when the host has
+    // its own board-loading path. Builds the iface/router and syncs the world.
+    bool attach( BOARD* board );
 
     // Map a KiCad copper layer (PCB_LAYER_ID int) to/from a PNS layer index.
     int  pnsLayer( int boardLayer ) const;
@@ -71,6 +76,7 @@ private:
     std::shared_ptr<BOARD>                m_boardHolder;
     std::unique_ptr<PNS_KICAD_IFACE_BASE> m_iface;
     std::unique_ptr<PNS::ROUTER>          m_router;
+    std::unique_ptr<PNS::ROUTING_SETTINGS> m_routingSettings;
 };
 
 } // namespace gbridge

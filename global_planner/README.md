@@ -92,11 +92,65 @@ stays in the tens and each plan is sub-10 ms. For a 100-target evaluation loop,
 reuse one `Planner` and run targets across worker processes (the core is
 stateless between `plan()` calls except for `bumpCongestion`).
 
-## Bridge build status
+## Bridge smoketest (real link + runtime against KiCad/PNS)
+
+`bridge_smoketest.cpp` loads a board via the qa helper, `attach()`es the bridge,
+extracts obstacles from the live PNS world, runs the core, and exercises
+`routeAndCheck`. To build it, add this target to `qa/tools/pns/CMakeLists.txt`
+(mirrors `qa_pns_regressions`) and configure with `-DKICAD_BUILD_PNS_DEBUG_TOOL=ON`:
+
+```cmake
+add_executable( gplan_bridge_smoketest
+  ${COMMON_SRCS}
+  ../../qa_utils/pcb_test_frame.cpp ../../qa_utils/pcb_test_selection_tool.cpp
+  ../../qa_utils/test_app_main.cpp ../../qa_utils/utility_program.cpp
+  ../../qa_utils/mocks.cpp
+  ../../../global_planner/planner_core.cpp
+  ../../../global_planner/pns_bridge.cpp
+  ../../../global_planner/bridge_smoketest.cpp )
+target_compile_definitions( gplan_bridge_smoketest PRIVATE PCBNEW TEST_APP_NO_MAIN )
+add_dependencies( gplan_bridge_smoketest pcbnew )
+target_include_directories( gplan_bridge_smoketest PRIVATE ${CMAKE_SOURCE_DIR}/global_planner )
+target_link_libraries( gplan_bridge_smoketest
+  qa_pcbnew_utils connectivity pcbcommon pnsrouter gal common gal qa_utils
+  dxflib_qcad tinyspline_lib nanosvg idf3 pcbcommon markdown_lib 3d-viewer
+  ${PCBNEW_IO_LIBRARIES} ${wxWidgets_LIBRARIES} ${GDI_PLUS_LIBRARIES}
+  Boost::headers ${PCBNEW_EXTRA_LIBS} )
+```
+
+```bash
+ninja -C <kicad-build> gplan_bridge_smoketest
+<kicad-build>/qa/tools/pns/gplan_bridge_smoketest complex_hierarchy
+```
+
+The bridge splits `load()` (uses `BOARD_LOADER`, i.e. the pcbnew kiface) from
+`attach(BOARD*)` (routing setup only) so a host with its own board-loading path
+links without the kiface — the smoketest uses `attach()`.
+
+## Bridge build status — verified link + runtime
 
 The pure core + Python bindings are built, tested (ctest, ASan/UBSan) and run
-end-to-end here. `pns_bridge.{h,cpp}` is **KiCad-linked and cannot be compiled
-outside the KiCad tree**; every one of its ~60 PNS/BOARD API calls was verified
-against the repository headers (signatures match). Build it inside the KiCad
-tree to validate at runtime; the via-placement sequence
-(`ToggleViaPlacement`/`SwitchLayer`) is a first cut to confirm there.
+end-to-end. `pns_bridge.{h,cpp}` is **KiCad-linked** (builds in the KiCad tree).
+It has been **compiled, linked and run against a real KiCad/PNS build** via
+`bridge_smoketest` on `qa/data/pcbnew/complex_hierarchy.kicad_pcb`:
+
+```
+board loaded: 361 tracks, 72 footprints
+bridge attached, PNS world synced
+obstacles extracted: 739 (fixed=378, movable=361)
+gplan candidates for the net: 3
+routeAndCheck: ok=1 placed=1 collided=0      <-- real PNS shove route, clean
+SMOKETEST OK
+```
+
+Bugs found and fixed during runtime bring-up (all in the bridge, none in the core):
+- split `load()` (needs `BOARD_LOADER`/kiface) from `attach(BOARD*)` so hosts
+  with their own board loading link without the kiface;
+- `attach()` must `LoadSettings()` a `ROUTING_SETTINGS` before `SyncWorld()`/
+  `SetMode()` (else `Settings()` derefs null);
+- evaluate the routed **head** via `Traces()` (the head exists after `Move()`),
+  not `HasPlacedAnything()` (only true after a fix/commit);
+- item pick falls back to a small slop radius.
+
+Remaining first-cut to confirm on multi-layer boards: the via sequence
+(`ToggleViaPlacement`/`SwitchLayer`).

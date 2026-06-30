@@ -147,6 +147,28 @@ target_link_libraries( qa_pns_regressions
 )
 
 
+# --- gplan bridge smoketest (real link+runtime test; see global_planner/) ----
+add_executable( gplan_bridge_smoketest
+  ${COMMON_SRCS}
+  ../../qa_utils/pcb_test_frame.cpp
+  ../../qa_utils/pcb_test_selection_tool.cpp
+  ../../qa_utils/test_app_main.cpp
+  ../../qa_utils/utility_program.cpp
+  ../../qa_utils/mocks.cpp
+  ../../../global_planner/planner_core.cpp
+  ../../../global_planner/pns_bridge.cpp
+  ../../../global_planner/bridge_smoketest.cpp
+)
+target_compile_definitions( gplan_bridge_smoketest PRIVATE PCBNEW TEST_APP_NO_MAIN )
+add_dependencies( gplan_bridge_smoketest pcbnew )
+target_include_directories( gplan_bridge_smoketest PRIVATE ${CMAKE_SOURCE_DIR}/global_planner )
+target_link_libraries( gplan_bridge_smoketest
+    qa_pcbnew_utils connectivity pcbcommon pnsrouter gal common gal qa_utils
+    dxflib_qcad tinyspline_lib nanosvg idf3 pcbcommon markdown_lib 3d-viewer
+    ${PCBNEW_IO_LIBRARIES} ${wxWidgets_LIBRARIES} ${GDI_PLUS_LIBRARIES}
+    Boost::headers ${PCBNEW_EXTRA_LIBS}
+)
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}

@@ -1,4 +1,5 @@
 /build/
+/build-py/
 /selftest
 /tests
 *.o

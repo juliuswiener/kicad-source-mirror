@@ -11,7 +11,6 @@
 #include "pns_bridge.h"
 
 #include <board.h>
-#include <board_loader.h>
 #include <pcb_track.h>
 #include <pad.h>
 #include <zone.h>
@@ -20,7 +19,6 @@
 #include <math/vector2d.h>
 #include <geometry/shape_line_chain.h>
 #include <settings/settings_manager.h>
-#include <io/io_mgr.h>
 
 #include <router/pns_router.h>
 #include <router/pns_kicad_iface.h>
@@ -51,28 +49,27 @@ public:
 PnsBridge::PnsBridge() = default;
 PnsBridge::~PnsBridge() = default;
 
-bool PnsBridge::load( const std::string& pcbPath )
+// NOTE: PnsBridge::load() lives in pns_bridge_load.cpp — it pulls in
+// BOARD_LOADER (the pcbnew kiface). Hosts that load boards themselves link only
+// this TU and call attach(), avoiding the kiface dependency.
+
+bool PnsBridge::attach( BOARD* board )
 {
-    m_settings = std::make_unique<SETTINGS_MANAGER>();
-
-    wxFileName pro( pcbPath );
-    pro.SetExt( wxT( "kicad_pro" ) );
-    m_settings->LoadProject( pro.GetFullPath() );
-    PROJECT* project = &m_settings->Prj();
-
-    // BOARD_LOADER::Load attaches the project, builds the DRC engine and calls
-    // InitEngine() on <board>.kicad_dru — so all custom rules are live.
-    m_boardHolder = std::shared_ptr<BOARD>(
-            BOARD_LOADER::Load( pcbPath, PCB_IO_MGR::KICAD_SEXP, project ).release() );
-    if( !m_boardHolder )
+    if( !board )
         return false;
-    m_board = m_boardHolder.get();
+    m_board = board;
 
     m_iface = std::make_unique<HeadlessIface>();
     m_iface->SetBoard( m_board );
 
     m_router = std::make_unique<PNS::ROUTER>();
     m_router->SetInterface( m_iface.get() );
+
+    // ROUTER::Settings() dereferences m_settings; it must be loaded before
+    // SyncWorld()/SetMode() (mirrors qa pns_log_player::createRouter()).
+    m_routingSettings = std::make_unique<PNS::ROUTING_SETTINGS>( nullptr, "" );
+    m_router->LoadSettings( m_routingSettings.get() );
+
     m_router->ClearWorld();
     m_router->SyncWorld();
 
@@ -190,7 +187,10 @@ RouteResult PnsBridge::routeAndCheck( const std::vector<gplan::Waypoint>& wps )
     int      layer  = wps.front().layer;
 
     // Pick the PNS item under the start point (a pad/track on the target net).
+    // Try an exact hit first, then with a small slop radius to catch pad edges.
     PNS::ITEM_SET startHits = m_router->QueryHoverItems( startP );
+    if( startHits.Empty() )
+        startHits = m_router->QueryHoverItems( startP, 100000 ); // ~0.1 mm
     PNS::ITEM*    startItem = startHits.Empty() ? nullptr : startHits[0];
 
     // Import track/via sizes from the start item + net rules.
@@ -222,17 +222,19 @@ RouteResult PnsBridge::routeAndCheck( const std::vector<gplan::Waypoint>& wps )
     }
 
     // --- Evaluate (mirror of ROUTER::markViolations) -----------------------
+    // The "head" trace exists after Move() even without a FixRoute commit, so
+    // base the verdict on Traces() rather than HasPlacedAnything() (which is
+    // only true once a segment has been fixed/committed).
     PNS::PLACEMENT_ALGO* placer = m_router->Placer();
-    r.placed = placer && placer->HasPlacedAnything();
+    PNS::NODE*     node   = placer ? placer->CurrentNode( true ) : nullptr;
+    PNS::ITEM_SET  traces = placer ? placer->Traces() : PNS::ITEM_SET();
+    r.placed = node && traces.Size() > 0;
     if( !r.placed )
     {
         r.reason = m_router->FailureReason().ToStdString();
         m_router->StopRouting();
         return r;
     }
-
-    PNS::NODE*     node   = placer->CurrentNode( true );
-    PNS::ITEM_SET  traces = placer->Traces();
 
     for( PNS::ITEM* item : traces.Items() )
     {
