@@ -57,12 +57,21 @@ is the same minus loading, for hosts with their own BOARD.
 | `probeTarget(x,y,layer,net,clr,otherLayer)` | `TargetProbe{ seedable, congested, nearestForeign, foreignNet, nearestOther }` — flag a congested pad-centre target and re-aim at the escape/drop point |
 | `routeAndCheck(waypoints)` | drive PNS shove along the waypoints; speculative (commits nothing). `RouteResult{ ok, placed, vias, collided, blocking, reason }` |
 | `routeAndExtract(waypoints)` | speculative, but returns the routed geometry (`RouteGeom`) for the host to apply itself |
-| `routeAndCommit(waypoints)` | **production path**: route AND commit to the PNS world (route-order). Returns PNS's **lossless parent-matched** change stream (`RouteChange`): `added*` (new copper), `mod*` (shoved neighbours — **modify the existing board item by UUID in place**, via links intact), `removed_uuids`. Next net shoves against this copper. |
+| `routeAndCommit(waypoints)` | **production path**: route AND commit to the PNS world (route-order). Returns PNS's **lossless parent-matched** change stream (`RouteChange`): `added*` (new copper), `mod*` (shoved neighbours — **modify the existing board item by UUID in place**, via links intact), `removed_uuids`. Only commits if the route actually **reaches** the target; otherwise `ok=false, reached=false` + `blocking` = farthest point reached. |
+| `routeLongHaul(waypoints, maxInserts)` | long single legs that PNS can only fragment: retry `routeAndCommit`, inserting the `blocking` point as a **checkpoint** waypoint each round (stable sub-goals, fresh budgets). Honest `ok=false` if it still can't reach. |
+| `dragComponent(x,y,newX,newY)` | shove a footprint + its connected tracks (PNS `COMPONENT_DRAGGER`). Commits only if the move is **clean** (never endangers connections). Refuses a **locked** footprint. Returns the same `RouteChange` (shoved tracks as `mod`-by-UUID). |
+| `probeDrag(x,y,newX,newY)` | **speculative** component drag — evaluate `{clean, cost, shoved}` then discard (commits nothing). The primitive for a placement search. |
+| `shoveComponentSearch(x,y,candidates)` | router-driven placement: `probeDrag` each candidate `{nx,ny}`, keep the cleanest/cheapest, commit it. `ShoveResult{ committed, x, y, cost, change }`. |
 
 Modelled on `qa/tools/pns/pns_log_player.cpp` and `pns_router.cpp` (markViolations,
-CommitRouting). `routeAndCommit` overrides the iface's `AddItem/UpdateItem/
-RemoveItem` to capture PNS's own commit stream — so shoved neighbours are
-modified in place rather than delete+re-added (which would break connectivity).
+CommitRouting). `routeAndCommit`/`dragComponent` override the iface's `AddItem/
+UpdateItem/RemoveItem` to capture PNS's own commit stream — so shoved neighbours
+are modified in place rather than delete+re-added (which would break connectivity).
+
+**Locking (host-controlled "do not move"):** lock copper with `track.SetLocked(true)`
+before `attach()` → PNS marks it `MK_LOCKED` and never shoves it while routing;
+lock a footprint with `fp.SetLocked(true)` → `dragComponent`/`probeDrag` refuse it
+(`ok=false, reason="component locked"`). NPTH pads are auto non-routable.
 
 ### Production host loop (commit-to-world)
 
@@ -83,6 +92,21 @@ for net in route_order:                          # order matters less w/ commit-
 
 The speculative `plan → routeAndCheck → bump_congestion → replan` loop
 (`example.py`, mocked router) is still available for candidate evaluation.
+
+### Long-haul net + opening a corridor by shoving a component
+
+```python
+# Cross-board net PNS can't reach in one leg -> checkpoint-retry driver:
+r = br.route_long_haul(planner.plan(start, target)[0].waypoints, max_inserts=6)
+if not r.ok:                                   # honest: still couldn't reach
+    # r.blocking = farthest point; nudge a blocking component out of the way:
+    cands = [(bx + dx, by) for dx in range(-200_000, 200_001, 50_000)]   # nm grid
+    sr = br.shove_component_search(cx, cy, cands)   # probe each, commit cheapest-clean
+    if sr.committed:
+        board.move_footprint(ref, sr.x - cx, sr.y - cy)
+        for u, g in zip(sr.change.mod_seg_uuids, sr.change.mod_segs): board.modify(u, g)
+        r = br.route_long_haul(...)            # retry the net in the freed corridor
+```
 
 ## API
 
@@ -176,8 +200,13 @@ multilayer routeAndCheck: ok=1 placed=1 vias=1 collided=0 <-- F.Cu->via->B.Cu, c
 routeAndExtract: ok=1 placed=1 net=1 segs=9               <-- host applies geometry
 T12 walkaround routeAndCheck: ok=1 placed=1               <-- route mode switch
 T10 re-attach routeAndCheck: ok=1 placed=1               <-- reloadable bridge
-routeAndCommit: ok=1 placed=1 net=1 added=9 mod=0 removed=0 <-- lossless commit-to-world
+routeAndCommit: ok=1 placed=1 reached=1 net=1 added=9     <-- lossless, honest-reached
 probeTarget net-1 pad: seedable=1 congested=0            <-- target probe
+dragComponent (+0.05mm): ok=1 placed=1                   <-- clean component shove
+dragComponent on LOCKED footprint: ok=0 'component locked' <-- lock respected
+probeDrag(zero move): clean=1 cost=0                     <-- speculative, no commit
+shoveComponentSearch: committed=1 chosen=(95915000,56896000) <-- candidate search
+routeLongHaul: ok=1 reached=1                            <-- checkpoint-retry driver
 T9 ratsnest target: (123825000,68326000); routed ok=1 placed=1  <-- unrouted-net endpoint
 SMOKETEST OK   (EXIT=0)
 ```
