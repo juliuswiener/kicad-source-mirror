@@ -81,6 +81,38 @@ inline double distPointPolygon( Point p, const Polygon& poly )
     return distSegPolygon( p, p, poly );
 }
 
+// T6 — exact test: does segment a-b pass through the INTERIOR of a convex CCW
+// polygon? (Liang-Barsky / Cyrus-Beck half-plane clip — resolution-independent,
+// replaces point sampling.) Interior of a CCW poly = left of every edge. We clip
+// the parameter t in [0,1] against each edge's half-plane; a positive-length
+// surviving interval means the segment crosses the interior. Grazing along the
+// boundary yields a zero-length interval and is NOT counted (the block polygons
+// are already shrunk by ~margin, so tangent paths sit just outside).
+inline bool segHitsConvex( Point a, Point b, const Polygon& poly )
+{
+    Point d = sub( b, a );
+    double t0 = 0.0, t1 = 1.0;
+    size_t n = poly.size();
+    for( size_t i = 0, j = n - 1; i < n; j = i++ )
+    {
+        Point e   = sub( poly[i], poly[j] );          // CCW edge j->i, interior on left
+        double num = cross( e, sub( a, poly[j] ) );    // f(0): >=0 means inside this half-plane
+        double den = cross( e, d );                    // df/dt
+        if( std::fabs( den ) < 1e-12 )
+        {
+            if( num < 0 ) return false;                // parallel and fully outside -> no hit
+        }
+        else
+        {
+            double t = -num / den;
+            if( den > 0 ) t0 = std::max( t0, t );      // entering interior
+            else          t1 = std::min( t1, t );      // leaving interior
+            if( t0 > t1 ) return false;
+        }
+    }
+    return ( t1 - t0 ) > 1e-9;                          // positive-length interior crossing
+}
+
 double signedArea( const Polygon& poly )
 {
     double a = 0;
@@ -282,7 +314,6 @@ bool Planner::edgeBlocked( Point a, Point b, int layer ) const
     int sp = stackPos( layer );
     if( sp < 0 )
         return true;
-    const int K = 24;
     for( const Polygon& block : m_layerData[sp].fixedBlock )
     {
         // An endpoint inside this hull means we are legitimately leaving/entering
@@ -290,12 +321,8 @@ bool Planner::edgeBlocked( Point a, Point b, int layer ) const
         // block edges incident to that endpoint.
         if( pointInPolygon( a, block ) || pointInPolygon( b, block ) )
             continue;
-        for( int k = 1; k < K; ++k )
-        {
-            double t = static_cast<double>( k ) / K;
-            if( pointInPolygon( { a.x + ( b.x - a.x ) * t, a.y + ( b.y - a.y ) * t }, block ) )
-                return true;
-        }
+        if( segHitsConvex( a, b, block ) )             // T6: exact, no sampling
+            return true;
     }
     return false;
 }

@@ -248,6 +248,19 @@ int main()
         CHECK( bad == 0 && ok == 8 * 50, "T1: concurrent plan/bump safe + valid" );
     }
 
+    // T6. Exact edge blocking catches a thin wall placed between old sample points.
+    {
+        // 30-long edge, old K=24 sampling spacing 1.25; wall at x=15.6 (off-grid)
+        // inflated ~0.3 wide → no old sample landed inside, but it truly blocks.
+        std::vector<Obstacle> obs = { { box( 15.6, 0, 0.1, 40 ), true, 0 } };
+        Planner pl( obs, base );
+        auto paths = pl.plan( { 0, 0 }, { 30, 0 } );
+        bool straight = false;
+        for( const Path& p : paths )
+            if( p.waypoints.size() == 2 ) straight = true;   // direct line = crosses wall
+        CHECK( !straight, "T6: thin wall blocks the direct edge (exact, no sampling miss)" );
+    }
+
     std::printf( "\n%d passed, %d failed\n", g_pass, g_fail );
     return g_fail ? 1 : 0;
 }
