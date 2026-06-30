@@ -28,15 +28,22 @@
 #include <router/pns_itemset.h>
 #include <router/pns_line.h>
 #include <router/pns_segment.h>
+#include <router/pns_arc.h>
 #include <router/pns_via.h>
+#include <geometry/shape_arc.h>
+#include <geometry/shape.h>
 #include <router/pns_node.h>
 #include <router/pns_placement_algo.h>
 #include <router/pns_layerset.h>
 
 using namespace gbridge;
 
-// A minimal headless iface: PNS_KICAD_IFACE_BASE already stubs the view/commit
-// methods, so we only need the net helpers (its base returns -1 / "").
+// Headless iface. The base stubs the commit methods (AddItem/UpdateItem/
+// RemoveItem are empty) — we OVERRIDE them to CAPTURE PNS's own parent-matched
+// change stream during CommitRouting() into a RouteChange (added = new copper,
+// updated = shoved neighbours keyed by board UUID, removed = deleted by UUID).
+// This is lossless: the host modifies existing board items in place by UUID
+// instead of delete+re-adding them (which breaks via/connectivity links).
 class HeadlessIface : public PNS_KICAD_IFACE_BASE
 {
 public:
@@ -47,6 +54,65 @@ public:
     wxString GetNetName( PNS::NET_HANDLE aNet ) const override
     {
         return aNet ? static_cast<NETINFO_ITEM*>( aNet )->GetNetname() : wxString();
+    }
+
+    gbridge::RouteChange changes;
+    void clearChanges() { changes = gbridge::RouteChange{}; }
+
+    void AddItem( PNS::ITEM* aItem ) override
+    {
+        if( aItem->OfKind( PNS::ITEM::SEGMENT_T ) )
+            changes.addedSegs.push_back( segVec( static_cast<PNS::SEGMENT*>( aItem ) ) );
+        else if( aItem->OfKind( PNS::ITEM::ARC_T ) )
+            changes.addedSegs.push_back( arcVec( static_cast<PNS::ARC*>( aItem ) ) );
+        else if( aItem->OfKind( PNS::ITEM::VIA_T ) )
+            changes.addedVias.push_back( viaVec( static_cast<PNS::VIA*>( aItem ) ) );
+    }
+    void UpdateItem( PNS::ITEM* aItem ) override
+    {
+        std::string uuid = parentUuid( aItem );
+        if( aItem->OfKind( PNS::ITEM::SEGMENT_T ) )
+        { changes.modSegUuids.push_back( uuid );
+          changes.modSegs.push_back( segVec( static_cast<PNS::SEGMENT*>( aItem ) ) ); }
+        else if( aItem->OfKind( PNS::ITEM::ARC_T ) )
+        { changes.modSegUuids.push_back( uuid );
+          changes.modSegs.push_back( arcVec( static_cast<PNS::ARC*>( aItem ) ) ); }
+        else if( aItem->OfKind( PNS::ITEM::VIA_T ) )
+        { changes.modViaUuids.push_back( uuid );
+          changes.modVias.push_back( viaVec( static_cast<PNS::VIA*>( aItem ) ) ); }
+    }
+    void RemoveItem( PNS::ITEM* aItem ) override
+    {
+        std::string uuid = parentUuid( aItem );
+        if( !uuid.empty() )
+            changes.removedUuids.push_back( uuid );
+    }
+
+private:
+    std::string parentUuid( PNS::ITEM* it ) const
+    {
+        return it->Parent() ? it->Parent()->m_Uuid.AsString().ToStdString() : std::string();
+    }
+    std::vector<double> segVec( PNS::SEGMENT* s ) const
+    {
+        const SEG& g = s->Seg();
+        double bl = GetBoardLayerFromPNSLayer( s->Layer() );
+        return { (double) g.A.x, (double) g.A.y, (double) g.B.x, (double) g.B.y,
+                 (double) s->Width(), bl };
+    }
+    std::vector<double> arcVec( PNS::ARC* a ) const   // straight-chord approximation
+    {
+        const SHAPE_ARC& sa = a->Arc();
+        double bl = GetBoardLayerFromPNSLayer( a->Layer() );
+        return { (double) sa.GetP0().x, (double) sa.GetP0().y,
+                 (double) sa.GetP1().x, (double) sa.GetP1().y, (double) a->Width(), bl };
+    }
+    std::vector<double> viaVec( PNS::VIA* v ) const
+    {
+        double top = GetBoardLayerFromPNSLayer( v->Layers().Start() );
+        double bot = GetBoardLayerFromPNSLayer( v->Layers().End() );
+        return { (double) v->Pos().x, (double) v->Pos().y,
+                 (double) v->Diameter( v->Layers().Start() ), (double) v->Drill(), top, bot };
     }
 };
 
@@ -538,4 +604,125 @@ std::optional<gplan::Waypoint> PnsBridge::nearestUnconnected( double x, double y
     if( !ok )
         return std::nullopt;
     return gplan::Waypoint{ { (double) other.x, (double) other.y }, otherLayers.Start() };
+}
+
+// ---------------------------------------------------------------------------
+// Route AND commit to the PNS world — lossless, parent-matched change stream.
+// ---------------------------------------------------------------------------
+RouteChange PnsBridge::routeAndCommit( const std::vector<gplan::Waypoint>& wps )
+{
+    RouteChange rc;
+    if( wps.size() < 2 )
+        return rc;
+
+    auto toV = []( const gplan::Waypoint& w )
+    { return VECTOR2I( (int) std::lround( w.p.x ), (int) std::lround( w.p.y ) ); };
+
+    VECTOR2I startP = toV( wps.front() );
+    int      layer  = wps.front().layer;
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( startP );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( startP, 100000 );
+    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+
+    PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
+    m_iface->SetStartLayerFromPNS( layer );
+    m_iface->ImportSizes( sizes, startItem, startItem ? startItem->Net() : nullptr,
+                          VECTOR2D( startP.x, startP.y ) );
+    m_router->UpdateSizes( sizes );
+    if( startItem )
+        rc.netcode = m_iface->GetNetCode( startItem->Net() );
+
+    m_router->Settings().SetMode( toPnsMode( m_mode ) );
+    if( !m_router->StartRouting( startP, startItem, layer ) )
+    {
+        rc.reason = m_router->FailureReason().ToStdString();
+        return rc;
+    }
+
+    for( size_t i = 1; i < wps.size(); ++i )
+    {
+        VECTOR2I p = toV( wps[i] );
+        if( wps[i].layer != wps[i - 1].layer )
+        {
+            m_router->Move( p, nullptr );
+            if( !m_router->IsPlacingVia() ) m_router->ToggleViaPlacement();
+            m_router->SwitchLayer( wps[i].layer );
+            m_router->FixRoute( p, nullptr, false, false );
+            if( m_router->IsPlacingVia() ) m_router->ToggleViaPlacement();
+            continue;
+        }
+        m_router->Move( p, nullptr );
+    }
+
+    // Finish the head, then commit to the world. CommitRouting() emits PNS's
+    // parent-matched Add/Update/RemoveItem into our HeadlessIface and persists
+    // the route into m_world (so the next net shoves against it).
+    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
+    m_router->FixRoute( toV( wps.back() ), nullptr, true, false );
+    hi->clearChanges();
+    m_router->CommitRouting();
+
+    RouteChange& ch = hi->changes;
+    rc.addedSegs   = ch.addedSegs;   rc.addedVias = ch.addedVias;
+    rc.modSegUuids = ch.modSegUuids; rc.modSegs   = ch.modSegs;
+    rc.modViaUuids = ch.modViaUuids; rc.modVias   = ch.modVias;
+    rc.removedUuids = ch.removedUuids;
+    rc.vias   = static_cast<int>( ch.addedVias.size() );
+    rc.placed = !rc.addedSegs.empty() || !rc.addedVias.empty();
+    rc.ok     = rc.placed;
+    rc.reason = m_router->FailureReason().ToStdString();
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
+// Probe a target point for seedability + congestion (catch bad pad-centre aims).
+// ---------------------------------------------------------------------------
+TargetProbe PnsBridge::probeTarget( double x, double y, int layer, int net,
+                                    double clearance, int otherLayer )
+{
+    TargetProbe tp;
+    VECTOR2I p( (int) std::lround( x ), (int) std::lround( y ) );
+
+    auto onLayer = []( PNS::ITEM* it, int L )
+    { return L >= 0 && it->Layers().Start() <= L && L <= it->Layers().End(); };
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( p, 600000 );   // 0.6 mm window
+    double bestThis = 1e18, bestOther = 1e18;
+    int    fnThis = -1;
+
+    for( PNS::ITEM* it : hits.Items() )
+    {
+        int n = m_iface->GetNetCode( it->Net() );
+        if( n == net )
+        {
+            if( onLayer( it, layer ) ) tp.seedable = true;
+            continue;                                   // own net never congests
+        }
+        if( onLayer( it, layer ) )
+        {
+            const SHAPE* s = it->Shape( layer );
+            int act = 0;
+            if( s && s->Collide( p, 1000000, &act ) && act < bestThis )
+            { bestThis = act; fnThis = n; }
+        }
+        if( onLayer( it, otherLayer ) )
+        {
+            const SHAPE* s = it->Shape( otherLayer );
+            int act = 0;
+            if( s && s->Collide( p, 1000000, &act ) && act < bestOther )
+                bestOther = act;
+        }
+    }
+
+    if( bestThis < 1e18 )
+    {
+        tp.nearestForeign = bestThis;
+        tp.foreignNet     = fnThis;
+        tp.congested      = bestThis < clearance;
+    }
+    if( bestOther < 1e18 )
+        tp.nearestOther = bestOther;
+    return tp;
 }

@@ -62,6 +62,44 @@ struct RouteGeom
     std::vector<std::vector<double>> removedVias;   // x,y,boardLayerTop,boardLayerBottom
 };
 
+// LOSSLESS commit-to-world result. Unlike RouteGeom (a post-hoc geometry diff
+// that delete+re-adds shoved neighbours and loses via/connectivity links), this
+// is PNS's OWN parent-matched change stream from CommitRouting(): shoved
+// neighbours come back as MODIFY-by-UUID (host moves the existing board item in
+// place, keeping its identity + via links), and the route is committed into the
+// PNS world so the next net shoves against it (route-order).
+struct RouteChange
+{
+    bool ok        = false;
+    bool placed    = false;
+    bool collided  = false;
+    int  vias      = 0;
+    int  netcode   = -1;
+    std::string reason;
+    // ADDED — new copper to create on the board.
+    std::vector<std::vector<double>> addedSegs;   // {x1,y1,x2,y2,width,boardLayer}
+    std::vector<std::vector<double>> addedVias;   // {x,y,dia,drill,boardTop,boardBot}
+    // MODIFIED — shoved neighbours: modify the EXISTING board item with this uuid
+    // to the new geometry (do NOT delete+re-add — that breaks via connectivity).
+    std::vector<std::string>         modSegUuids;
+    std::vector<std::vector<double>> modSegs;     // parallel; {x1,y1,x2,y2,width,boardLayer}
+    std::vector<std::string>         modViaUuids;
+    std::vector<std::vector<double>> modVias;      // parallel; {x,y,dia,drill,boardTop,boardBot}
+    // REMOVED — existing board items to delete (by uuid).
+    std::vector<std::string>         removedUuids;
+};
+
+// Diagnostic for a routing TARGET point (catches "aimed at a pad centre in a
+// congested row" mistakes). Lets the host flag/re-target before routing.
+struct TargetProbe
+{
+    bool   seedable        = false;   // an item of `net` exists at the point on this layer
+    bool   congested       = false;   // foreign copper within `clearance` of the point
+    double nearestForeign  = -1.0;    // nm to nearest foreign item (-1 = none in window)
+    int    foreignNet      = -1;      // net code of that foreign item
+    double nearestOther    = -1.0;    // nearest foreign on the adjacent layer (escape hint)
+};
+
 class PnsBridge
 {
 public:
@@ -114,6 +152,18 @@ public:
     // its PNS layer. nullopt if the net is fully connected or the start is empty.
     // Use this to feed gplan real UNROUTED endpoints instead of guessing pads.
     std::optional<gplan::Waypoint> nearestUnconnected( double x, double y, int pnsLayer );
+
+    // Route AND commit to the PNS world (route-order). Returns PNS's lossless,
+    // parent-matched change set: added copper, MODIFY-by-uuid for shoved
+    // neighbours (in-place, via links intact), removed-by-uuid. Persists into the
+    // world so the next routeAndCommit shoves against this net's copper.
+    RouteChange routeAndCommit( const std::vector<gplan::Waypoint>& waypoints );
+
+    // Probe a target point: seedable? foreign copper within `clearance`? nearest
+    // foreign distance/net + the same on `otherPnsLayer` (escape hint). Use to
+    // flag a congested pad-centre target and re-aim at the drop/escape point.
+    TargetProbe probeTarget( double x, double y, int pnsLayer, int net,
+                             double clearance, int otherPnsLayer );
 
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }

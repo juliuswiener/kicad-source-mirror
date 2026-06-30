@@ -222,6 +222,36 @@ static int run( int argc, char** argv )
         { std::printf( "T10 FAIL: route after re-attach placed nothing\n" ); return 1; }
     }
 
+    // --- routeAndCommit: lossless commit-to-world (PNS change stream) --------
+    if( !paths.empty() )
+    {
+        gbridge::RouteChange c = br.routeAndCommit( paths.front().waypoints );
+        std::printf( "routeAndCommit: ok=%d placed=%d net=%d added=%zu mod=%zu "
+                     "removed=%zu vias=%d reason='%s'\n",
+                     c.ok, c.placed, c.netcode, c.addedSegs.size(),
+                     c.modSegUuids.size(), c.removedUuids.size(), c.vias, c.reason.c_str() );
+        if( !c.placed )
+        { std::printf( "COMMIT FAIL: nothing committed\n" ); return 1; }
+        std::printf( "COMMIT OK (%zu added segs, %zu modified neighbours by uuid)\n",
+                     c.addedSegs.size(), c.modSegUuids.size() );
+    }
+
+    // --- probeTarget: seedable / congested flag for a target ----------------
+    {
+        int    bcu = br.pnsLayer( B_Cu );
+        double clr = 200000;
+        gbridge::TargetProbe t1 = br.probeTarget( pa.x, pa.y, fcu, 1, clr, bcu );
+        std::printf( "probeTarget net-1 pad: seedable=%d congested=%d nearestForeign=%.0f "
+                     "foreignNet=%d nearestOther=%.0f\n",
+                     t1.seedable, t1.congested, t1.nearestForeign, t1.foreignNet, t1.nearestOther );
+        gbridge::TargetProbe t2 = br.probeTarget( pa.x + 50000000, pa.y, fcu, 1, clr, bcu );
+        std::printf( "probeTarget open point: seedable=%d congested=%d\n",
+                     t2.seedable, t2.congested );
+        if( t2.seedable )
+        { std::printf( "PROBE FAIL: open point reported seedable\n" ); return 1; }
+        std::printf( "PROBE OK\n" );
+    }
+
     // --- T9: make net 1 unrouted (remove its tracks), find the ratsnest target
     //          via the bridge, and route the now-unrouted net. ----------------
     {

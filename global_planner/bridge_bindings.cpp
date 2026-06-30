@@ -77,6 +77,28 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "removed_segs", &RouteGeom::removedSegs )
         .def_readonly( "removed_vias", &RouteGeom::removedVias );
 
+    py::class_<RouteChange>( m, "RouteChange" )
+        .def_readonly( "ok", &RouteChange::ok )
+        .def_readonly( "placed", &RouteChange::placed )
+        .def_readonly( "collided", &RouteChange::collided )
+        .def_readonly( "vias", &RouteChange::vias )
+        .def_readonly( "netcode", &RouteChange::netcode )
+        .def_readonly( "reason", &RouteChange::reason )
+        .def_readonly( "added_segs", &RouteChange::addedSegs )
+        .def_readonly( "added_vias", &RouteChange::addedVias )
+        .def_readonly( "mod_seg_uuids", &RouteChange::modSegUuids )
+        .def_readonly( "mod_segs", &RouteChange::modSegs )
+        .def_readonly( "mod_via_uuids", &RouteChange::modViaUuids )
+        .def_readonly( "mod_vias", &RouteChange::modVias )
+        .def_readonly( "removed_uuids", &RouteChange::removedUuids );
+
+    py::class_<TargetProbe>( m, "TargetProbe" )
+        .def_readonly( "seedable", &TargetProbe::seedable )
+        .def_readonly( "congested", &TargetProbe::congested )
+        .def_readonly( "nearest_foreign", &TargetProbe::nearestForeign )
+        .def_readonly( "foreign_net", &TargetProbe::foreignNet )
+        .def_readonly( "nearest_other", &TargetProbe::nearestOther );
+
     auto bridge = py::class_<PnsBridge>( m, "PnsBridge" );
     py::enum_<PnsBridge::RouteMode>( bridge, "RouteMode" )   // T12
         .value( "MARK_OBSTACLES", PnsBridge::RouteMode::MarkObstacles )
@@ -93,5 +115,9 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def( "route_and_check", &PnsBridge::routeAndCheck, py::arg( "waypoints" ) )
         .def( "route_and_extract", &PnsBridge::routeAndExtract, py::arg( "waypoints" ) )
         .def( "nearest_unconnected", &PnsBridge::nearestUnconnected,   // T9
-              py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ) );
+              py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ) )
+        .def( "route_and_commit", &PnsBridge::routeAndCommit, py::arg( "waypoints" ) )
+        .def( "probe_target", &PnsBridge::probeTarget,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ),
+              py::arg( "net" ), py::arg( "clearance" ), py::arg( "other_pns_layer" ) );
 }
