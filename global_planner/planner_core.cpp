@@ -82,6 +82,19 @@ inline double distPointPolygon( Point p, const Polygon& poly )
     return distSegPolygon( p, p, poly );
 }
 
+// T5 — AABB helpers for exact spatial culling (only skip a hull when its box is
+// provably too far → results stay bit-identical to the brute-force version).
+inline double segLo( double a, double b ) { return a < b ? a : b; }
+inline double segHi( double a, double b ) { return a > b ? a : b; }
+// Distance between two axis-aligned boxes (0 if they overlap).
+inline double aabbDist( double ax0, double ay0, double ax1, double ay1,
+                        double bx0, double by0, double bx1, double by1 )
+{
+    double dx = std::max( 0.0, std::max( bx0 - ax1, ax0 - bx1 ) );
+    double dy = std::max( 0.0, std::max( by0 - ay1, ay0 - by1 ) );
+    return std::sqrt( dx * dx + dy * dy );
+}
+
 // T6 — exact test: does segment a-b pass through the INTERIOR of a convex CCW
 // polygon? (Liang-Barsky / Cyrus-Beck half-plane clip — resolution-independent,
 // replaces point sampling.) Interior of a CCW poly = left of every edge. We clip
@@ -230,6 +243,13 @@ void Planner::buildLayers()
 
     m_layerData.assign( m_params.layers.size(), {} );
 
+    auto polyAABB = []( const Polygon& p ) -> AABB {
+        double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+        for( const Point& v : p )
+        { x0 = std::min(x0,v.x); y0 = std::min(y0,v.y); x1 = std::max(x1,v.x); y1 = std::max(y1,v.y); }
+        return { x0, y0, x1, y1 };
+    };
+
     for( const Obstacle& ob : m_obstacles )
     {
         int sp = stackPos( ob.layer );
@@ -241,12 +261,16 @@ void Planner::buildLayers()
             Polygon ccw = asCCW( convexHull( ob.poly ) );  // defensive: ensure convex
             if( ccw.size() < 3 )
                 continue;                                  // degenerate, ignore
-            ld.fixedOrig.push_back( ccw );
-            ld.fixedInflated.push_back( offsetConvex( ccw, margin ) );
-            ld.fixedBlock.push_back( offsetConvex( ccw, margin - eps ) );
+            Polygon block = offsetConvex( ccw, margin - eps );
+            ld.fixedOrigBox.push_back( polyAABB( ccw ) );
+            ld.fixedBlockBox.push_back( polyAABB( block ) );
+            ld.fixedOrig.push_back( std::move( ccw ) );
+            ld.fixedInflated.push_back( offsetConvex( ld.fixedOrig.back(), margin ) );
+            ld.fixedBlock.push_back( std::move( block ) );
         }
         else
         {
+            ld.movableBox.push_back( polyAABB( ob.poly ) );
             ld.movable.push_back( ob.poly );
         }
     }
@@ -315,11 +339,16 @@ bool Planner::edgeBlocked( Point a, Point b, int layer ) const
     int sp = stackPos( layer );
     if( sp < 0 )
         return true;
-    for( const Polygon& block : m_layerData[sp].fixedBlock )
+    const LayerData& ld = m_layerData[sp];
+    double sx0 = segLo(a.x,b.x), sy0 = segLo(a.y,b.y), sx1 = segHi(a.x,b.x), sy1 = segHi(a.y,b.y);
+    for( size_t i = 0; i < ld.fixedBlock.size(); ++i )
     {
+        const AABB& bx = ld.fixedBlockBox[i];                       // T5: cull non-overlap
+        if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) > 0.0 )
+            continue;
+        const Polygon& block = ld.fixedBlock[i];
         // An endpoint inside this hull means we are legitimately leaving/entering
-        // the obstacle it represents (e.g. the source/target pad) — it must not
-        // block edges incident to that endpoint.
+        // the obstacle it represents (e.g. the source/target pad).
         if( pointInPolygon( a, block ) || pointInPolygon( b, block ) )
             continue;
         if( segHitsConvex( a, b, block ) )             // T6: exact, no sampling
@@ -334,9 +363,15 @@ bool Planner::viaSiteClear( Point p, int layer ) const
     if( sp < 0 )
         return false;
     double viaMargin = m_params.viaClearance + m_params.viaDiameter / 2.0;
-    for( const Polygon& hull : m_layerData[sp].fixedOrig )
-        if( distPointPolygon( p, hull ) < viaMargin )
+    const LayerData& ld = m_layerData[sp];
+    for( size_t i = 0; i < ld.fixedOrig.size(); ++i )
+    {
+        const AABB& bx = ld.fixedOrigBox[i];                        // T5: cull far hulls
+        if( aabbDist( p.x, p.y, p.x, p.y, bx.x0, bx.y0, bx.x1, bx.y1 ) >= viaMargin )
+            continue;
+        if( distPointPolygon( p, ld.fixedOrig[i] ) < viaMargin )
             return false;
+    }
     return true;
 }
 
@@ -346,10 +381,16 @@ double Planner::edgeWeight( Point a, Point b, int layer ) const
     const double pitch  = m_params.trackWidth + m_params.clearance;
     const double base   = dist( a, b );
     const LayerData& ld = m_layerData[stackPos( layer )];
+    double sx0 = segLo(a.x,b.x), sy0 = segLo(a.y,b.y), sx1 = segHi(a.x,b.x), sy1 = segHi(a.y,b.y);
 
     double dFix = std::numeric_limits<double>::max();
-    for( const Polygon& hull : ld.fixedOrig )
-        dFix = std::min( dFix, distSegPolygon( a, b, hull ) );
+    for( size_t i = 0; i < ld.fixedOrig.size(); ++i )
+    {
+        const AABB& bx = ld.fixedOrigBox[i];                        // T5: prune if box can't beat dFix
+        if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) >= dFix )
+            continue;
+        dFix = std::min( dFix, distSegPolygon( a, b, ld.fixedOrig[i] ) );
+    }
     if( dFix == std::numeric_limits<double>::max() )
         dFix = 10.0 * pitch;
 
@@ -357,9 +398,14 @@ double Planner::edgeWeight( Point a, Point b, int layer ) const
     double capacity = std::max( 1.0, std::floor( gap / pitch ) );
 
     double usage = 0.0;
-    for( const Polygon& mv : ld.movable )
-        if( distSegPolygon( a, b, mv ) < margin )
+    for( size_t i = 0; i < ld.movable.size(); ++i )
+    {
+        const AABB& bx = ld.movableBox[i];                          // T5: cull beyond margin
+        if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) >= margin )
+            continue;
+        if( distSegPolygon( a, b, ld.movable[i] ) < margin )
             usage += 1.0;
+    }
     for( const CongestionBump& bp : m_bumps )
         if( distPointSeg( bp.center, a, b ) < bp.radius )
             usage += bp.factor;

@@ -31,6 +31,10 @@ add_executable( selftest selftest.cpp )
 target_link_libraries( selftest PRIVATE planner_core )
 add_test( NAME selftest COMMAND selftest )
 
+add_executable( perf_tests perf_tests.cpp )
+target_link_libraries( perf_tests PRIVATE planner_core )
+add_test( NAME perf_tests COMMAND perf_tests )
+
 # Dedicated TSan build of the core tests (race check for the thread-safe Planner).
 option( GPLAN_TSAN "Add a ThreadSanitizer test target" OFF )
 if( GPLAN_TSAN )

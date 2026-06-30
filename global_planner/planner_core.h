@@ -118,6 +118,8 @@ private:
     // makes plan()/bumpCongestion safe to call concurrently on ONE instance.
     mutable std::mutex          m_mutex;
 
+    struct AABB { double x0, y0, x1, y1; };   // T5: per-hull bounding box for culling
+
     // Per-layer configuration-space data (keyed by layer id).
     struct LayerData
     {
@@ -125,6 +127,8 @@ private:
         std::vector<Polygon> fixedInflated; // offset by margin -> graph nodes
         std::vector<Polygon> fixedBlock;    // offset by ~margin -> edge blocking
         std::vector<Polygon> movable;       // for congestion
+        // Parallel AABBs (T5 spatial cull): index-aligned with the lists above.
+        std::vector<AABB>    fixedOrigBox, fixedBlockBox, movableBox;
     };
     std::vector<LayerData> m_layerData;      // indexed by stackPos()
 
