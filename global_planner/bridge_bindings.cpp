@@ -29,6 +29,7 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "ok", &RouteResult::ok )
         .def_readonly( "collided", &RouteResult::collided )
         .def_readonly( "placed", &RouteResult::placed )
+        .def_readonly( "vias", &RouteResult::vias )
         .def_readonly( "blocking", &RouteResult::blocking )
         .def_readonly( "reason", &RouteResult::reason );
 
