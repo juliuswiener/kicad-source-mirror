@@ -40,23 +40,49 @@ geometric margin-clearance assertion, movable-doesn't-block + congestion
 re-ranking, routing from inside a pad, fully-enclosed/unreachable, non-convex
 fixed input, multi-layer vias, and dedup. All pass clean under ASan/UBSan.
 
-## The KiCad-side bridge (`pns_bridge.{h,cpp}`)
+## The KiCad-side bridge (`pns_bridge.{h,cpp}`, Python module `gplan_kicad`)
 
-The two adapters are implemented in `pns_bridge.cpp` (KiCad-linked, **builds in
-the KiCad tree only** — not part of the dependency-free core):
+KiCad-linked, **builds in the KiCad tree only** (not part of the dependency-free
+core). `load()`/`attach()` set up the PNS world; everything else reads the world
+or drives PNS. `load()` uses the kiface-free `PCB_IO_KICAD_SEXPR` + a hand-built
+`DRC_ENGINE` (picks up `.kicad_pro` / `.kicad_dru` by filename stem); `attach()`
+is the same minus loading, for hosts with their own BOARD.
 
-| Adapter | Direction | What it does |
-|---|---|---|
-| `getObstacles(layer)` | board → core | Walks the BOARD; emits each item as `Obstacle{ poly, fixed = pad/locked/keepout, layer }`. v1 uses bounding boxes for fixed shapes (convex, conservative). |
-| `routeAndCheck(path)` | core → board | Loads board+rules, drives PNS shove along the waypoints (`StartRouting` → `Move` per waypoint, layer change → via), then `QueryColliding` on the placed trace. Returns `(ok, collided, blocking)`. |
+| Method | What it does |
+|---|---|
+| `load(path)` / `attach(board)` | build PNS world; `attach()` is **re-callable** (T10) — `cleanup()` then re-attach to route another board in one process |
+| `setMode(mode)` | `RouteMode` Shove / Walkaround / MarkObstacles (re-asserted before each `StartRouting`) |
+| `getObstacles(layer)` / `getAllObstacles()` | BOARD → `gplan::Obstacle`. Pads use their **real effective-shape hull** (not bbox); board outline added as a thin fixed boundary |
+| `nearestUnconnected(x,y,layer)` | from a start point, the nearest **unrouted** ratsnest anchor — feed gplan real endpoints, not guessed pad centres |
+| `probeTarget(x,y,layer,net,clr,otherLayer)` | `TargetProbe{ seedable, congested, nearestForeign, foreignNet, nearestOther }` — flag a congested pad-centre target and re-aim at the escape/drop point |
+| `routeAndCheck(waypoints)` | drive PNS shove along the waypoints; speculative (commits nothing). `RouteResult{ ok, placed, vias, collided, blocking, reason }` |
+| `routeAndExtract(waypoints)` | speculative, but returns the routed geometry (`RouteGeom`) for the host to apply itself |
+| `routeAndCommit(waypoints)` | **production path**: route AND commit to the PNS world (route-order). Returns PNS's **lossless parent-matched** change stream (`RouteChange`): `added*` (new copper), `mod*` (shoved neighbours — **modify the existing board item by UUID in place**, via links intact), `removed_uuids`. Next net shoves against this copper. |
 
-It is modelled on the verified headless harness `qa/tools/pns/pns_log_player.cpp`
-and the collision read-out in `pcbnew/router/pns_router.cpp::markViolations()`.
-`load()` uses `BOARD_LOADER::Load`, which attaches `.kicad_pro` and runs
-`InitEngine()` on `.kicad_dru` automatically (filename convention — same stem).
+Modelled on `qa/tools/pns/pns_log_player.cpp` and `pns_router.cpp` (markViolations,
+CommitRouting). `routeAndCommit` overrides the iface's `AddItem/UpdateItem/
+RemoveItem` to capture PNS's own commit stream — so shoved neighbours are
+modified in place rather than delete+re-added (which would break connectivity).
 
-Orchestrate the `plan → verify → bump_congestion → replan` loop yourself
-(see `example.py` for the loop with a mocked router).
+### Production host loop (commit-to-world)
+
+```python
+import gplan, gplan_kicad
+br = gplan_kicad.PnsBridge(); br.load("board.kicad_pcb")
+br.set_mode(gplan_kicad.PnsBridge.RouteMode.WALKAROUND)
+for net in route_order:                          # order matters less w/ commit-to-world
+    t = br.probe_target(tx, ty, fcu, net, clearance, bcu)
+    if t.congested or not t.seedable:
+        tx, ty, layer = escape_point(net)        # B.Cu drop, not the congested pad centre
+    paths = planner.plan(start, fcu, gplan.Point(tx, ty), layer)
+    c = br.route_and_commit(paths[0].waypoints)  # committed into the world
+    for s in c.added_segs:                         board.add_track(s)
+    for u, g in zip(c.mod_seg_uuids, c.mod_segs):  board.modify(u, g)   # in-place, keeps vias
+    for u in c.removed_uuids:                       board.delete(u)
+```
+
+The speculative `plan → routeAndCheck → bump_congestion → replan` loop
+(`example.py`, mocked router) is still available for candidate evaluation.
 
 ## API
 
@@ -68,19 +94,27 @@ planner.bumpCongestion( where, radius, factor );         // after a PNS failure
 
 ## Status / limitations
 
-- **Multi-layer + vias: done.** `params.layers` lists the copper stack; the
-  planner adds via-edges (cost `viaCost`) between adjacent layers at clear
-  landing sites. A waypoint layer change == "drop a via". `plan(start, sL,
-  target, tL)`; a single-layer `plan(start, target)` convenience remains.
-- Fixed hulls must be **convex** (bounding boxes in the bridge are; PNS `Hull()`
-  is too). Non-convex fixed shapes would need decomposition.
-- Via sites are restricted to graph columns (obstacle corners + start/target).
-  Fine for "last bits"; a denser via-candidate set can be added if needed.
-- Bridge via handling (`ToggleViaPlacement`/`SwitchLayer`) is a first cut —
-  verify against your PNS version.
+Done (roadmap T1–T12, each gate-verified): thread-safe `Planner`, **Yen's
+k-distinct paths**, exact convex edge-blocking, AABB spatial cull (~10× the graph
+build), multi-layer + vias, real-`Hull()` obstacle extraction, board outline,
+ratsnest endpoints, reloadable bridge, route modes, **lossless commit-to-world**,
+target congestion probe, and a board-level **negotiated-congestion multi-net
+loop** (`pathfinder.h`). See `ROADMAP.md` for the remaining backlog (diff pairs,
+length/skew tuning, optimizer pass, CDT free-space backend, ML net-order ranker).
+
+Caveats:
+- Fixed hulls must be **convex** — the core convex-hulls them defensively; a
+  genuinely concave keepout should be split.
+- Via sites are graph columns (obstacle corners + start/target). Fine for
+  "last bits"; a denser via grid can be added.
 - Capacity/tightness use distance approximations, not swept-polygon clipping —
   fine because PNS is the ground truth; the planner only proposes. Tune
-  `wCongestion`, `wTightness`, `reusePenalty`, `viaCost` per board.
+  `wCongestion`, `wTightness`, `viaCost` per board.
+- `routeAndCommit`'s shove-capture (`mod*` by UUID) and `probeTarget`'s
+  `congested` path both run and compile against real KiCad, but the regression
+  fixture (`complex_hierarchy`) didn't trigger a shove or a fine-pitch neighbour,
+  so those two branches are mechanism-verified rather than gated. A fine-pitch +
+  shove fixture would close that.
 
 ## Performance & scaling
 
@@ -136,12 +170,16 @@ It has been **compiled, linked and run against a real KiCad/PNS build** via
 
 ```
 board loaded: 361 tracks, 72 footprints
-bridge attached, PNS world synced
-obstacles extracted: 739 (fixed=378, movable=361)
-gplan candidates for the net: 3
+obstacles extracted: 747 (fixed=386, movable=361)   <-- real hulls + board outline
 routeAndCheck: ok=1 placed=1 vias=0 collided=0           <-- real PNS shove route, clean
 multilayer routeAndCheck: ok=1 placed=1 vias=1 collided=0 <-- F.Cu->via->B.Cu, clean
-SMOKETEST OK
+routeAndExtract: ok=1 placed=1 net=1 segs=9               <-- host applies geometry
+T12 walkaround routeAndCheck: ok=1 placed=1               <-- route mode switch
+T10 re-attach routeAndCheck: ok=1 placed=1               <-- reloadable bridge
+routeAndCommit: ok=1 placed=1 net=1 added=9 mod=0 removed=0 <-- lossless commit-to-world
+probeTarget net-1 pad: seedable=1 congested=0            <-- target probe
+T9 ratsnest target: (123825000,68326000); routed ok=1 placed=1  <-- unrouted-net endpoint
+SMOKETEST OK   (EXIT=0)
 ```
 
 The multi-layer leg drops a real via (`vias=1`): the via commits on a mid-route
