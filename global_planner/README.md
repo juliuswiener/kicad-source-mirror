@@ -79,6 +79,26 @@ lock a footprint with `fp.SetLocked(true)` → `dragComponent`/`probeDrag` refus
 `moveVia`/`probeViaMove` refuse it (`reason="via locked"`). NPTH pads are auto
 non-routable.
 
+**⚠ One KiCad runtime per process.** `gplan_kicad` links its own `wxWidgets`/
+`PGM_BASE`/kiface singletons (from the tree it was built against). Loading
+`gplan_kicad` in the **same process** as another KiCad/pcbnew instance (e.g. a
+KiCad plugin host, or a second `gplan_kicad` built against a different KiCad
+version) collides on those singletons → SIGABRT/segfault. If your agent needs
+both gplan routing *and* a live pcbnew session, run them as **separate
+processes** and hand geometry across via a file/socket (route in one process →
+serialize the `RouteChange`/`RouteGeom` to JSON → apply in the other). Locking
+one `Planner`/`PnsBridge` instance to one thread is fine; the process-level
+singleton is the actual boundary.
+
+**Locking everything to force a detour is a planner-scale trap, not a fix.**
+Locking ALL copper (not just the footprint/via you actually need fixed) turns
+every trace into a `fixed` obstacle for the core — `getAllObstacles()` returns
+hundreds of hulls, and `plan()`'s O(n³) graph build (§ Performance & scaling)
+chokes/times out, *and* the "wiggle room" (movable copper only costs, never
+blocks — see §1 in `AGENT_GUIDE.md`) is gone, so there's no slack left to route
+through. Lock only the specific footprint/via you want held still; leave
+everything else movable so PNS can shove it.
+
 ### Production host loop (commit-to-world)
 
 ```python

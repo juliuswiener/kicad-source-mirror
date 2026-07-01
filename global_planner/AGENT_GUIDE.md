@@ -153,6 +153,11 @@ for path in paths:
         ...
 pl.bump_congestion(gplan.Point(x,y), radius, factor)
 pl.clear_congestion()
+
+# Waypoint has a real constructor — build/concatenate waypoint lists by hand
+# (e.g. splicing legs from two different planner.plan() calls, or a manual
+# escape leg) without going through Path:
+manual = [gplan.Waypoint(gplan.Point(0,0), 0), gplan.Waypoint(gplan.Point(5,5), 1)]
 ```
 
 ---
@@ -450,6 +455,17 @@ multilayer routeAndCheck: ok=1 placed=1 vias=1 collided=0   F.Cu->via->B.Cu, cle
 - The bridge runs headless via a minimal `Pgm()` bootstrap; KiCad's global
   teardown is unreliable headless (the smoketest hard-exits after success). In a
   long-lived host process this is irrelevant.
+- **One KiCad runtime per process.** `gplan_kicad` links its own wx/`PGM_BASE`/
+  kiface singletons. Loading it alongside another KiCad/pcbnew instance in the
+  same process (a plugin host, a second differently-built `gplan_kicad`, …)
+  collides on those singletons → crash. Run gplan routing and a live pcbnew
+  session as separate processes; hand geometry across as JSON
+  (`RouteChange`/`RouteGeom` fields are all plain numbers/strings).
+- **Don't lock everything to force a detour.** Locking ALL copper (instead of
+  just the one footprint/via you need fixed) turns every trace into a `fixed`
+  obstacle → `plan()`'s O(n³) build chokes on hundreds of hulls, and the
+  movable "wiggle room" (§1) is gone, so PNS has no slack to shove through.
+  Lock only what must not move.
 
 ---
 

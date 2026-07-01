@@ -48,8 +48,11 @@ PYBIND11_MODULE( gplan, m )
         .def_readwrite( "viaDiameter", &PlannerParams::viaDiameter );
 
     py::class_<Waypoint>( m, "Waypoint" )
-        .def_readonly( "p", &Waypoint::p )
-        .def_readonly( "layer", &Waypoint::layer )
+        .def( py::init<>() )
+        .def( py::init( []( Point p, int layer ) { return Waypoint{ p, layer }; } ),
+              py::arg( "p" ), py::arg( "layer" ) = 0 )
+        .def_readwrite( "p", &Waypoint::p )
+        .def_readwrite( "layer", &Waypoint::layer )
         .def( "__repr__", []( const Waypoint& w ) {
             return "Waypoint((" + std::to_string( w.p.x ) + ", "
                    + std::to_string( w.p.y ) + "), L" + std::to_string( w.layer ) + ")";
