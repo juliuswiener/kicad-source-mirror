@@ -126,7 +126,16 @@ PYBIND11_MODULE( gplan_kicad, m )
         .value( "WALKAROUND",     PnsBridge::RouteMode::Walkaround );
     bridge
         .def( py::init<>() )
-        .def( "load", &PnsBridge::load, py::arg( "pcb_path" ) )
+        .def( "load", []( PnsBridge& self, const std::string& p ) { return self.load( p ); },
+              py::arg( "pcb_path" ) )
+        // 0.6 — like load(), but returns (ok, error_detail) instead of a bare
+        // bool so callers can distinguish project-load / parse / attach failure.
+        .def( "load_ex", []( PnsBridge& self, const std::string& p )
+              {
+                  std::string err;
+                  bool ok = self.load( p, &err );
+                  return py::make_tuple( ok, err );
+              }, py::arg( "pcb_path" ) )
         .def( "cleanup", &PnsBridge::cleanup )                // T10
         .def( "set_mode", &PnsBridge::setMode, py::arg( "mode" ) )   // T12
         .def( "pns_layer", &PnsBridge::pnsLayer, py::arg( "board_layer" ) )

@@ -482,6 +482,14 @@ multilayer routeAndCheck: ok=1 placed=1 vias=1 collided=0   F.Cu->via->B.Cu, cle
   obstacle → `plan()`'s O(n³) build chokes on hundreds of hulls, and the
   movable "wiggle room" (§1) is gone, so PNS has no slack to shove through.
   Lock only what must not move.
+- **`PnsBridge::load()`'s relative-path cwd trap.** A successful `load()` calls
+  KiCad's `SETTINGS_MANAGER::LoadProject()`, which chdir's the process into the
+  project's own directory as a side effect (not gated off in this headless
+  bootstrap). `load()` resolves its OWN argument to absolute first, so a single
+  relative path always works — but if you pass a SECOND relative path to a
+  later `load()` call (same or a new `PnsBridge`, same process), it resolves
+  against the drifted cwd, not the one your script started in. Always pass
+  absolute paths to `load()` from a long-lived host/Python process.
 
 ---
 

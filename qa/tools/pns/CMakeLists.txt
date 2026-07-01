@@ -157,6 +157,7 @@ add_executable( gplan_bridge_smoketest
   ../../qa_utils/mocks.cpp
   ../../../global_planner/planner_core.cpp
   ../../../global_planner/pns_bridge.cpp
+  ../../../global_planner/pns_bridge_load.cpp
   ../../../global_planner/bridge_smoketest.cpp
 )
 target_compile_definitions( gplan_bridge_smoketest PRIVATE PCBNEW TEST_APP_NO_MAIN )

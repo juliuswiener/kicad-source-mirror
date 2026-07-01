@@ -19,15 +19,24 @@
 
 using namespace gbridge;
 
-bool PnsBridge::load( const std::string& pcbPath )
+bool PnsBridge::load( const std::string& pcbPath, std::string* aErr )
 {
-    const wxString pcb = wxString::FromUTF8( pcbPath );
+    // Resolve to absolute BEFORE anything else: LoadProject() below silently
+    // fails on a relative path once cwd has drifted from a prior successful
+    // load (LoadProject() itself changes cwd to the project dir as a side
+    // effect) — a relative path here would then resolve against the WRONG
+    // directory. Fixing at entry makes load() robust regardless of caller cwd.
+    wxFileName fnAbs( wxString::FromUTF8( pcbPath ) );
+    fnAbs.MakeAbsolute();
+    const wxString pcb = fnAbs.GetFullPath();
+    auto fail = [aErr]( const std::string& msg ) { if( aErr ) *aErr = msg; return false; };
 
     // Project (.kicad_pro): netclasses + design rules, by the usual stem.
     m_settings = std::make_unique<SETTINGS_MANAGER>();
     wxFileName fnPro( pcb );
     fnPro.SetExt( wxT( "kicad_pro" ) );
-    m_settings->LoadProject( fnPro.GetFullPath() );
+    if( !m_settings->LoadProject( fnPro.GetFullPath() ) )
+        return fail( "project load failed: " + std::string( fnPro.GetFullPath().utf8_str() ) );
     PROJECT* project = m_settings->GetProject( fnPro.GetFullPath() );
 
     std::unique_ptr<BOARD> board;
@@ -36,12 +45,16 @@ bool PnsBridge::load( const std::string& pcbPath )
         PCB_IO_KICAD_SEXPR io;
         board.reset( io.LoadBoard( pcb, nullptr, nullptr ) );
     }
+    catch( const std::exception& e )
+    {
+        return fail( "board parse failed: " + std::string( e.what() ) );
+    }
     catch( ... )
     {
-        return false;
+        return fail( "board parse failed: unknown exception" );
     }
     if( !board )
-        return false;
+        return fail( "board parse failed: LoadBoard returned null" );
 
     board->SetProject( project );
 
@@ -58,5 +71,7 @@ bool PnsBridge::load( const std::string& pcbPath )
     drcEngine->InitEngine( fnRules.FileExists() ? fnRules : wxFileName() );
 
     m_boardHolder = std::move( board );
-    return attach( m_boardHolder.get() );
+    if( !attach( m_boardHolder.get() ) )
+        return fail( "attach failed" );
+    return true;
 }

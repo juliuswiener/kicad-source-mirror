@@ -129,7 +129,10 @@ public:
     // Loads board + project (.kicad_pro) + custom rules (.kicad_dru) by the
     // usual filename convention, builds the DRC engine, and syncs the PNS world.
     // Returns false on failure. (Links BOARD_LOADER -> pcbnew kiface objects.)
-    bool load( const std::string& pcbPath );
+    // If aErr is non-null, it is filled with a specific reason on failure:
+    // "project load failed: ...", "board parse failed: ...", "empty board", or
+    // "attach failed" (0.6 — distinguishes file/parse/DRC/attach failure modes).
+    bool load( const std::string& pcbPath, std::string* aErr = nullptr );
 
     // Routing setup against an already-loaded BOARD (its DRC engine must already
     // be initialized). Does NOT depend on BOARD_LOADER — use when the host has

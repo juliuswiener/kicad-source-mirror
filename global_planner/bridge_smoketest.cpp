@@ -451,6 +451,63 @@ static int run( int argc, char** argv )
             std::printf( "T9: no net-1 F.Cu pad found; skipping\n" );
     }
 
+    // --- T10-RELOAD: PnsBridge::load() re-callable in the same process on a
+    // DIFFERENT board (0.5 — verifies attach()'s cleanup()-first re-entrancy
+    // actually holds at the load()-convenience-API level, not just attach()).
+    {
+        // NOTE: SETTINGS_MANAGER::LoadProject() (above, and inside br2.load())
+        // calls wxSetWorkingDirectory() on the project's own directory as a
+        // side effect, so resolve the second board relative to the FIRST
+        // board's already-absolute directory rather than the process cwd.
+        wxFileName fnPcb2( fnPcb.GetPath(), "issue7325.kicad_pcb" );
+        const wxString pcb2 = fnPcb2.GetFullPath();
+
+        gbridge::PnsBridge br2;
+        if( !br2.load( std::string( pcb2.utf8_str() ) ) )
+        { std::printf( "T10-RELOAD FAIL: load() #1 (%s)\n", (const char*) pcb2.utf8_str() ); return 1; }
+        std::vector<gplan::Obstacle> obsA = br2.getAllObstacles();
+        std::printf( "T10-RELOAD: load() #1 ok, %zu obstacles\n", obsA.size() );
+
+        // Reload the SAME bridge instance with the ORIGINAL board — this is the
+        // real 0.5 case: load->close->load in one process, one PnsBridge.
+        if( !br2.load( std::string( pcb.utf8_str() ) ) )
+        { std::printf( "T10-RELOAD FAIL: load() #2 (%s)\n", (const char*) pcb.utf8_str() ); return 1; }
+        std::vector<gplan::Obstacle> obsB = br2.getAllObstacles();
+        std::printf( "T10-RELOAD: load() #2 ok, %zu obstacles\n", obsB.size() );
+
+        // The reloaded world must be the SECOND board's, not stale first-board
+        // state (route a real net on it to prove the PNS world is live+correct).
+        PCB_TRACK* seed2 = nullptr;
+        for( PCB_TRACK* t : br2.board()->Tracks() )
+            if( t->Type() == PCB_TRACE_T ) { seed2 = t; break; }
+        if( seed2 )
+        {
+            VECTOR2I a = seed2->GetStart(), b = seed2->GetEnd();
+            int lyr2 = br2.pnsLayer( seed2->GetLayer() );
+            std::vector<gplan::Waypoint> wp2 = {
+                { { (double) a.x, (double) a.y }, lyr2 }, { { (double) b.x, (double) b.y }, lyr2 } };
+            gbridge::RouteResult rr2 = br2.routeAndCheck( wp2 );
+            std::printf( "T10-RELOAD: route on reloaded-original board ok=%d placed=%d\n",
+                         rr2.ok, rr2.placed );
+            if( !rr2.placed )
+            { std::printf( "T10-RELOAD FAIL: reloaded world not routable\n" ); return 1; }
+        }
+        else
+            std::printf( "T10-RELOAD: no PCB_TRACE_T on reloaded board; skipped route check\n" );
+
+        std::printf( "T10-RELOAD OK (load->close->load, same process, same PnsBridge)\n" );
+
+        // --- T-ERR (0.6): load() error detail distinguishes failure modes ---
+        std::string err;
+        gbridge::PnsBridge br3;
+        if( br3.load( "/nonexistent/path/does_not_exist.kicad_pcb", &err ) )
+        { std::printf( "T-ERR FAIL: load() of a nonexistent path unexpectedly succeeded\n" ); return 1; }
+        std::printf( "T-ERR: nonexistent path -> err='%s'\n", err.c_str() );
+        if( err.empty() )
+        { std::printf( "T-ERR FAIL: no error detail on load() failure\n" ); return 1; }
+        std::printf( "T-ERR OK (load() failure surfaces a specific reason)\n" );
+    }
+
     std::printf( "SMOKETEST OK\n" );
     return 0;
 }
