@@ -199,23 +199,39 @@ per-layer grid (`SpatialGrid`, cell ≈ average hull size) now returns only the
 bit-identical output on all fixtures (ctest + both real-board smoketests); the
 grid only narrows *candidates*, the exact AABB/polygon test still runs after.
 
-Result — `perf_tests.cpp`, single core:
+**T-NEIGHBOR (neighbour-bounded edge candidates)**: T-GRID sped up the obstacle
+scan *per candidate edge*, but `buildEdges()`'s outer loop still enumerated
+**every node pair** (`for i; for j>i`) as a candidate — O(n²) regardless. Each
+non-start/target node now queries an *expanding ring* (via a grid over node
+positions) until it has ≥24 neighbours or the ring covers the whole board,
+instead of testing all n−1 others. **start/target stay exempt** — tested
+against every other node — so a free direct sightline is never missed
+regardless of distance (only 2 nodes, O(n) extra).
 
-| n (obstacles) | before (brute force / T5-only) | after (T-GRID) |
-|---|---|---|
-| 200 | ~370 ms | ~24-28 ms (**13-15×**) |
-| 500 | *(untested — would time out)* | ~190 ms |
-| 885 | *(untested — would time out)* | ~700-750 ms |
+Result — `perf_tests.cpp`, single core, cumulative (brute-force baseline → T5 →
+T-GRID → T-NEIGHBOR):
+
+| n (obstacles) | brute force | + T5 + T-GRID | + T-NEIGHBOR | total speedup |
+|---|---|---|---|---|
+| 200 | ~370 ms | ~24-28 ms | ~10 ms | **~37×** |
+| 500 | *(would time out)* | ~190 ms | ~20 ms | — |
+| 885 | *(would time out)* | ~700-750 ms | ~86 ms | *(>350× vs. brute force extrapolated)* |
+| 1500 | *(would time out)* | ~2.8 s | ~200 ms | — |
 
 Real-world case: a session with 885 board obstacles that previously threatened
-to time out `route_long_haul` now completes a `plan()` call in under a second.
+to time out `route_long_haul` now completes a `plan()` call in **under 100 ms**.
+Scaling from 200→1500 (7.5×) costs only ~20× the time — close to linear, not
+the quadratic-to-cubic growth before.
 
-**Remaining bottleneck** (kubic → now quasi-**quadratic**, not linear): T-GRID
-fixed the *per-edge obstacle scan*; `buildEdges()`'s outer loop still enumerates
-**every node pair** (`for i; for j>i`) as an edge *candidate* — that O(n²) node-
-pair enumeration is untouched. The next step (not yet done) is bounding
-candidate generation itself to spatially-nearby node pairs (k-nearest-neighbour
-query per node via the same grid) instead of all-pairs — see `ROADMAP.md` 2.2.
+**Trade-off — no longer bit-identical.** T5/T-GRID only narrow *which hulls
+get tested* (same edges, same weights, provably unchanged — verified
+bit-identical). T-NEIGHBOR narrows *which node pairs are considered as edges
+at all*: on dense/complex real boards this can pick a different (but still
+valid, still verified-clear) waypoint sequence for the same route — confirmed
+on `complex_hierarchy`, still `ok=1 placed=1`, same segment count, geometry
+shifted a few mm. All correctness tests (ctest, both real-board smoketests)
+still pass; `MIN_NEIGHBORS=24` is a tunable floor if a specific board needs
+denser candidate coverage.
 
 For the intended use — *local* "last-bits" routing — feed only obstacles in the
 route's neighbourhood (the bridge's `getObstacles` can be bounded to a bbox

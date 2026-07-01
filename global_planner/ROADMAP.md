@@ -44,18 +44,30 @@ ways around obstacles, not just cost variants [Bhattacharya10]. Add a
 diversity/dissimilarity filter so the k returned paths spread across homotopy
 classes.
 
-### 2.2 Spatial index for graph build ★★★ (L) — `planner_core.cpp:336` — **PARTIALLY DONE**
-`buildEdges` was O(n²·m) ≈ O(n³): every candidate edge tested every hull.
-**Done**: a per-layer uniform grid (`SpatialGrid` — no Boost, stays dependency-
-free) now answers "hulls near this edge/point" in ~O(k) instead of ~O(m),
-verified bit-identical (ctest + both real-board smoketests). n=200: 370ms→24ms
-(13×); n=885 (real large-session obstacle count): now ~700ms (was untested/
-would time out) — see README § Performance & scaling.
-**Still open**: the O(n²) node-**pair** enumeration in `buildEdges`'s outer
-loop itself (every node tested against every other node as an edge candidate)
-is untouched — that's the remaining quasi-quadratic term. Next step: bound
-candidate generation to spatially-nearby node pairs (k-nearest-neighbour query
-per node via the same grid) instead of all-pairs, to get to ~O(n log n).
+### 2.2 Spatial index for graph build ★★★ (L) — `planner_core.cpp:336` — **DONE**
+`buildEdges` was O(n²·m) ≈ O(n³): every candidate edge tested every hull, AND
+every node pair was enumerated as a candidate in the first place. Both fixed,
+no Boost (core stays dependency-free):
+- **T-GRID**: a per-layer uniform grid (`SpatialGrid`) answers "hulls near this
+  edge/point" in ~O(k) instead of ~O(m). Provably bit-identical (the exact
+  AABB/polygon test still runs on every grid-query result — the grid only
+  narrows *which hulls get tested*). Verified bit-identical on ctest + both
+  real-board smoketests.
+- **T-NEIGHBOR**: `buildEdges`'s outer loop no longer enumerates all-pairs.
+  Each non-start/target node queries an expanding ring (grid over node XY) for
+  ≥24 neighbours instead of testing all n−1 others; start/target stay exempt
+  (tested against every other node, O(n) extra) so a free direct sightline is
+  never missed regardless of distance. **Not** bit-identical — narrows which
+  node pairs are even considered as edges, so a dense real board can pick a
+  different (still valid, still verified-clear) waypoint sequence. All
+  correctness tests still pass.
+
+Combined result (`perf_tests.cpp`, cumulative vs. brute force): n=200:
+370ms→~10ms (**~37×**); n=885 (real large-session obstacle count): would time
+out → **~86ms**; n=1500: would time out → ~200ms. Scaling from n=200→1500
+(7.5×) now costs only ~20× the time — close to linear, not the prior
+quadratic-to-cubic growth. See README § Performance & scaling for the full
+before/after table and the T-NEIGHBOR trade-off writeup.
 
 ### 2.3 Swept-polygon edge blocking ★★ (M) — `planner_core.cpp:270`
 24-point sampling can miss thin obstacles and is wasteful elsewhere. Build the
@@ -168,7 +180,8 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 1. **Tier 0** (all) — small, unblocks parallel eval + real commits + reload.
 2. **4.11 real hulls + 4.9 ratsnest endpoints + 4.10 board outline** — bridge data
    quality; biggest correctness gain for least code; makes routes realistic.
-3. **2.1 Yen + 2.2 R-tree + 2.5 region/caching** — planner quality + scale.
+3. **2.1 Yen** (done) **+ 2.2 spatial index** (done — T-GRID + T-NEIGHBOR)
+   **+ 2.5 region/caching** — planner quality + scale.
 4. **3.1 board-level PathFinder loop** — order-independence; the quality unlock.
 5. **4.6 optimizer + 4.8 mode strategy** — output cleanliness, cheap.
 6. **4.1 diff pairs + 4.2 length tuning** — opens high-speed boards (large, high value).

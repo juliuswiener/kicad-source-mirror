@@ -382,14 +382,25 @@ proposes, so over-tuning is low-risk.
 
 ## 14. Performance & scaling
 
-A per-layer spatial grid (T-GRID) makes the per-edge obstacle scan ~O(k)
-instead of ~O(m) (m = obstacle count) — n=200 obstacles: ~24-28 ms (was ~370 ms,
-13-15× faster); n=885 (a real large-session count): ~700-750 ms (was untested/
-would time out). The outer node-pair enumeration in `buildEdges()` is still
-O(n²) (n = graph nodes, n~4m for box hulls), so scaling is now **quasi-
-quadratic**, not linear — see `ROADMAP.md` 2.2 for the remaining step
-(neighbour-bounded candidate generation). For local last-bits routing (tens of
-obstacles) this is a non-issue either way. To keep it fast on dense boards:
+Two structural fixes now in place: **T-GRID** (per-layer spatial hash, makes
+the per-edge obstacle scan ~O(k) instead of ~O(m)) and **T-NEIGHBOR**
+(`buildEdges()` no longer enumerates all-pairs — each node queries an
+expanding ring of ≥24 spatial neighbours instead; start/target stay exempt —
+always tested against every other node, so a free direct sightline is never
+missed). Combined: n=200 obstacles ~10 ms (was ~370 ms brute force, **~37×**);
+n=885 (a real large-session count) ~86 ms (was untested/would time out).
+Scaling is now close to **linear**, not cubic. For local last-bits routing
+(tens of obstacles) this was already a non-issue either way.
+
+**T-NEIGHBOR trade-off**: unlike T-GRID (provably bit-identical — it only
+narrows *which hulls get tested*), T-NEIGHBOR narrows *which node pairs are
+even considered as edges*. On dense real boards this can pick a different
+(still valid, still verified-clear) waypoint sequence for the same route. All
+correctness tests still pass; if a specific board seems to be missing an
+obviously-better route, `MIN_NEIGHBORS` (currently 24, in `buildEdges()`) is
+the tunable floor.
+
+To keep it fast on dense boards regardless:
 
 - **Feed region-local obstacles**: filter `get_all_obstacles()` to a bbox around
   (start, target) before constructing the `Planner`. n stays in the tens →
@@ -397,10 +408,6 @@ obstacles) this is a non-issue either way. To keep it fast on dense boards:
 - **Reuse the PNS world**: `load()`/`attach()` once, route many nets against it
   (PNS folds committed copper into the world). Do **not** reload per net.
 - **Parallelise at the board-copy level** (one bridge per worker process).
-- **On a large board (hundreds of obstacles)**, region-culling to a bbox around
-  (start, target) is still the single biggest lever — even with T-GRID, n=885
-  is ~700 ms/`plan()` call, which adds up across a `route_long_haul` retry loop
-  or a multi-target evaluation. Filter to what's actually near the route.
 
 ---
 

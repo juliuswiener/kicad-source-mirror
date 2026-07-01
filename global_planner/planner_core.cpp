@@ -257,7 +257,13 @@ void Planner::SpatialGrid::build( const std::vector<AABB>& boxes )
         avgW += b.x1 - b.x0; avgH += b.y1 - b.y0;
     }
     avgW /= boxes.size(); avgH /= boxes.size();
-    cell = std::max( 1.0, std::max( avgW, avgH ) );   // cell ~ typical hull size
+    double sizeHeuristic = std::max( avgW, avgH );
+    if( sizeHeuristic < 1e-9 )
+        // Degenerate/point boxes (T-NEIGHBOR's node grid): avgW/avgH are 0, so
+        // fall back to a point-density heuristic — typical nearest-neighbour
+        // spacing for boxes.size() points spread over the bounding area.
+        sizeHeuristic = ( ( x1 - x0 ) + ( y1 - y0 ) ) / ( 2.0 * std::sqrt( (double) boxes.size() ) );
+    cell = std::max( 1.0, sizeHeuristic );   // cell ~ typical hull size / point spacing
     ox = x0; oy = y0;
 
     auto dims = [&]()
@@ -546,31 +552,99 @@ void Planner::buildEdges()
         m_adj[j].push_back( { i, id } );
     };
 
+    auto testPair = [&]( int i, int j )
+    {
+        const Node& A = m_nodes[i];
+        const Node& B = m_nodes[j];
+
+        if( A.layer == B.layer )
+        {
+            // Intra-layer visibility edge.
+            if( dist( A.p, B.p ) < 1e-9 )
+                return;
+            if( edgeBlocked( A.p, B.p, A.layer ) )
+                return;
+            addEdge( i, j, edgeWeight( A.p, B.p, A.layer ) );
+        }
+        else if( dist( A.p, B.p ) < 1e-9 )
+        {
+            // Same (x,y), different layer -> candidate via, only between
+            // layers adjacent in the stack, clear on both.
+            if( std::abs( stackPos( A.layer ) - stackPos( B.layer ) ) != 1 )
+                return;
+            if( viaSiteClear( A.p, A.layer ) && viaSiteClear( B.p, B.layer ) )
+                addEdge( i, j, m_params.viaCost );
+        }
+    };
+
+    // T-NEIGHBOR: buildEdges used to test EVERY node pair (O(n^2) candidates) —
+    // T-GRID (above) only sped up the per-candidate obstacle scan, not this
+    // outer enumeration. Bound candidate generation to spatially-nearby pairs
+    // instead: each node queries an expanding ring (via a grid over node XY
+    // positions) until it has enough neighbours, or the ring covers the whole
+    // board. start/target are exempt — tested against EVERY other node — so a
+    // free direct sightline is never missed regardless of distance (only 2
+    // nodes, O(n) extra, negligible). A pair found from EITHER side's query is
+    // tested at most once (seenPairs dedup).
+    std::vector<AABB> nodeBoxes( n );
+    for( int i = 0; i < n; ++i )
+        nodeBoxes[i] = { m_nodes[i].p.x, m_nodes[i].p.y, m_nodes[i].p.x, m_nodes[i].p.y };
+    SpatialGrid nodeGrid;
+    nodeGrid.build( nodeBoxes );
+
+    double boardDiag = 0.0;
+    {
+        double bx0 = 1e300, by0 = 1e300, bx1 = -1e300, by1 = -1e300;
+        for( int i = 0; i < n; ++i )
+        {
+            bx0 = std::min( bx0, m_nodes[i].p.x ); by0 = std::min( by0, m_nodes[i].p.y );
+            bx1 = std::max( bx1, m_nodes[i].p.x ); by1 = std::max( by1, m_nodes[i].p.y );
+        }
+        boardDiag = dist( { bx0, by0 }, { bx1, by1 } );
+    }
+    const int MIN_NEIGHBORS = 24;   // generous floor; keeps homotopy enumeration intact
+
+    std::set<int64_t> seenPairs;
+    auto pairKey = []( int a, int b )
+    { if( a > b ) std::swap( a, b ); return (int64_t) a * 10'000'000LL + b; };
+
+    std::vector<int> nbuf;
     for( int i = 0; i < n; ++i )
     {
-        for( int j = i + 1; j < n; ++j )
-        {
-            const Node& A = m_nodes[i];
-            const Node& B = m_nodes[j];
+        if( i == m_srcIdx || i == m_dstIdx )
+            continue;   // handled exhaustively below
 
-            if( A.layer == B.layer )
-            {
-                // Intra-layer visibility edge.
-                if( dist( A.p, B.p ) < 1e-9 )
-                    continue;
-                if( edgeBlocked( A.p, B.p, A.layer ) )
-                    continue;
-                addEdge( i, j, edgeWeight( A.p, B.p, A.layer ) );
-            }
-            else if( dist( A.p, B.p ) < 1e-9 )
-            {
-                // Same (x,y), different layer -> candidate via, only between
-                // layers adjacent in the stack, clear on both.
-                if( std::abs( stackPos( A.layer ) - stackPos( B.layer ) ) != 1 )
-                    continue;
-                if( viaSiteClear( A.p, A.layer ) && viaSiteClear( B.p, B.layer ) )
-                    addEdge( i, j, m_params.viaCost );
-            }
+        double r = std::max( nodeGrid.cell, 1.0 ) * 2.0;
+        for( int ring = 0; ring < 24; ++ring )
+        {
+            nbuf.clear();
+            nodeGrid.queryInto( m_nodes[i].p.x - r, m_nodes[i].p.y - r,
+                                m_nodes[i].p.x + r, m_nodes[i].p.y + r, nbuf );
+            if( (int) nbuf.size() > MIN_NEIGHBORS || r >= boardDiag )
+                break;
+            r *= 2.0;
+        }
+        for( int j : nbuf )
+        {
+            if( j == i )
+                continue;
+            int64_t key = pairKey( i, j );
+            if( !seenPairs.insert( key ).second )
+                continue;                    // already tested from the other side
+            testPair( std::min( i, j ), std::max( i, j ) );
+        }
+    }
+
+    for( int special : { m_srcIdx, m_dstIdx } )
+    {
+        for( int j = 0; j < n; ++j )
+        {
+            if( j == special )
+                continue;
+            int64_t key = pairKey( special, j );
+            if( !seenPairs.insert( key ).second )
+                continue;
+            testPair( std::min( special, j ), std::max( special, j ) );
         }
     }
 }
