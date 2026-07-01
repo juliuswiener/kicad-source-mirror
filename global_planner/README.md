@@ -62,6 +62,10 @@ is the same minus loading, for hosts with their own BOARD.
 | `dragComponent(x,y,newX,newY)` | shove a footprint + its connected tracks (PNS `COMPONENT_DRAGGER`). Commits only if the move is **clean** (never endangers connections). Refuses a **locked** footprint. Returns the same `RouteChange` (shoved tracks as `mod`-by-UUID). |
 | `probeDrag(x,y,newX,newY)` | **speculative** component drag — evaluate `{clean, cost, shoved}` then discard (commits nothing). The primitive for a placement search. |
 | `shoveComponentSearch(x,y,candidates)` | router-driven placement: `probeDrag` each candidate `{nx,ny}`, keep the cleanest/cheapest, commit it. `ShoveResult{ committed, x, y, cost, change }`. |
+| `routeDiffPairAndCommit(waypoints)` | route a differential pair: click **one** point of either net — `DIFF_PAIR_PLACER::FindDpPrimitivePair` auto-finds the coupled net (matches `+/-` / `_P/_N` naming). Both legs routed together, gap from netclass rules (auto-import, same as `routeAndCommit`). Same `RouteChange` contract; router placer-mode is switched and **restored** on every exit path. |
+| `tuneLength(x,y,endX,endY,layer,targetLengthNm)` | length-tune an **existing** routed run (`MEANDER_PLACER`) between two points on the same trace. `TuneResult{ change, status (0=TOO_SHORT/1=TOO_LONG/2=TUNED), currentLength, targetLength }`. Commits only on `status==TUNED`. |
+| `probeViaMove(x,y,newX,newY)` / `moveVia(x,y,newX,newY)` | relocate a single **via** (PNS `DM_VIA` drag) — e.g. a GND-stitch via blocking a pin's escape corridor. Same speculative/commit split as `probeDrag`/`dragComponent`; refuses a **locked** via. |
+| `shoveViaSearch(x,y,candidates)` | router-driven via placement: `probeViaMove` each candidate, commit the cleanest/cheapest. Same `ShoveResult` as `shoveComponentSearch`. |
 
 Modelled on `qa/tools/pns/pns_log_player.cpp` and `pns_router.cpp` (markViolations,
 CommitRouting). `routeAndCommit`/`dragComponent` override the iface's `AddItem/
@@ -71,7 +75,9 @@ are modified in place rather than delete+re-added (which would break connectivit
 **Locking (host-controlled "do not move"):** lock copper with `track.SetLocked(true)`
 before `attach()` → PNS marks it `MK_LOCKED` and never shoves it while routing;
 lock a footprint with `fp.SetLocked(true)` → `dragComponent`/`probeDrag` refuse it
-(`ok=false, reason="component locked"`). NPTH pads are auto non-routable.
+(`ok=false, reason="component locked"`); lock a via with `via.SetLocked(true)` →
+`moveVia`/`probeViaMove` refuse it (`reason="via locked"`). NPTH pads are auto
+non-routable.
 
 ### Production host loop (commit-to-world)
 
@@ -108,6 +114,20 @@ if not r.ok:                                   # honest: still couldn't reach
         r = br.route_long_haul(...)            # retry the net in the freed corridor
 ```
 
+### Relocating a via blocking a pin's escape corridor
+
+```python
+# GND-stitch via sitting in Pin 21 (RST_N)'s escape route:
+cands = [(vx + dx, vy + dy) for dx in (-100_000, 0, 100_000)
+                             for dy in (-100_000, 0, 100_000) if dx or dy]  # nm grid
+sr = br.shove_via_search(vx, vy, cands)   # probe each, commit cheapest-clean
+if sr.committed:
+    board.move_via(via_uuid, sr.x - vx, sr.y - vy)
+    for u, g in zip(sr.change.mod_seg_uuids, sr.change.mod_segs): board.modify(u, g)
+# or, for one specific candidate: pv = br.probe_via_move(vx, vy, nx, ny)
+#                                 if pv.clean: br.move_via(vx, vy, nx, ny)
+```
+
 ## API
 
 ```cpp
@@ -123,8 +143,15 @@ k-distinct paths**, exact convex edge-blocking, AABB spatial cull (~10× the gra
 build), multi-layer + vias, real-`Hull()` obstacle extraction, board outline,
 ratsnest endpoints, reloadable bridge, route modes, **lossless commit-to-world**,
 target congestion probe, and a board-level **negotiated-congestion multi-net
-loop** (`pathfinder.h`). See `ROADMAP.md` for the remaining backlog (diff pairs,
-length/skew tuning, optimizer pass, CDT free-space backend, ML net-order ranker).
+loop** (`pathfinder.h`).
+
+Also done, verified end-to-end against real KiCad/PNS: **differential pair
+routing** (`routeDiffPairAndCommit`), **length tuning** (`tuneLength`, via
+`MEANDER_PLACER` — ground-truthed against `pcb_tuning_pattern.cpp`), and
+**single-via relocation** (`moveVia`/`probeViaMove`/`shoveViaSearch`, for cases
+like a stitching via blocking a pin's escape route). See `ROADMAP.md` for the
+remaining backlog (skew tuning, optimizer pass, CDT free-space backend, ML
+net-order ranker).
 
 Caveats:
 - Fixed hulls must be **convex** — the core convex-hulls them defensively; a
@@ -207,7 +234,22 @@ dragComponent on LOCKED footprint: ok=0 'component locked' <-- lock respected
 probeDrag(zero move): clean=1 cost=0                     <-- speculative, no commit
 shoveComponentSearch: committed=1 chosen=(95915000,56896000) <-- candidate search
 routeLongHaul: ok=1 reached=1                            <-- checkpoint-retry driver
+routeDiffPairAndCommit: ok=0 (no diff-pair-named nets on this board — honest);
+  mode correctly RESTORED after (confirmed by a routeAndCheck right after)
+tuneLength: ok=0 status=TOO_LONG curLen=46075907 target=10295663  <-- ran clean, honest non-commit
 T9 ratsnest target: (123825000,68326000); routed ok=1 placed=1  <-- unrouted-net endpoint
+SMOKETEST OK   (EXIT=0)
+```
+
+**Via relocation, verified on `qa/data/pcbnew/issue7325.kicad_pcb`** (327 real
+vias — `complex_hierarchy` has none, so this needs a via-bearing fixture):
+
+```
+T-VIA: via at (208788000,108458000)
+probeViaMove(+0.2mm): clean=1 cost=0 shoved=0
+moveVia(+0.2mm): ok=1 placed=1 modVias=1                 <-- a REAL via relocated, committed
+moveVia on LOCKED via: ok=0 reason='via locked'          <-- lock respected
+shoveViaSearch: committed=1 chosen=(209088000,108458000) <-- candidate search, committed
 SMOKETEST OK   (EXIT=0)
 ```
 
@@ -225,3 +267,15 @@ Bugs found and fixed during runtime bring-up (all in the bridge, none in the cor
 - item pick falls back to a small slop radius;
 - via sequence rewritten: a layer change does `Move` → arm via → `SwitchLayer`
   → `FixRoute` (speculative), which actually places the via — verified `vias=1`.
+- `tuneLength`: `MEANDER_PLACER::doMove()` unconditionally computes
+  `origPathDelay()` even in length-only mode, dereferencing
+  `MEANDER_SETTINGS::m_netClass` — crashed until populated from the real net's
+  `NETCLASS` before `UpdateSettings()`;
+- `tuneLength`: a manual `QueryColliding()` on the meander geometry after
+  `Move()` corrupted the R-tree traversal (deep crash in
+  `KIRTREE::COW_RTREE::searchImpl`) — removed; the real UI driver
+  (`pcb_tuning_pattern.cpp`) never runs this check either, since meanders
+  self-enforce DRC via `TuningStatus()`;
+- `ROUTER::FailureReason()` is **sticky** across `StartRouting()` calls (not
+  reset) — `tuneLength`/`routeDiffPairAndCommit` only surface it when nothing
+  was actually placed, else it leaks the previous call's error message.

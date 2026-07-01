@@ -261,6 +261,12 @@ public:
     RouteChange moveVia( double x, double y, double newX, double newY,
                         bool allowViolations = false );
 
+    // Router-driven via shoving: probe each candidate position (probeViaMove),
+    // keep the cleanest/cheapest, commit that one (moveVia). Same pattern as
+    // shoveComponentSearch, for a single via. `candidates` is a list of {nx,ny}.
+    ShoveResult shoveViaSearch( double x, double y,
+                               const std::vector<std::vector<double>>& candidates );
+
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }
 

@@ -112,19 +112,32 @@ static int run( int argc, char** argv )
             std::printf( "probeViaMove(+0.2mm): clean=%d cost=%.0f shoved=%d\n",
                          pv.clean, pv.cost, pv.shoved );
 
-            gbridge::RouteChange mv = br.moveVia( vp.x, vp.y, vp.x + 200000, vp.y, false );
+            VECTOR2I cur = vp;   // tracks the via's actual current position
+            gbridge::RouteChange mv = br.moveVia( cur.x, cur.y, cur.x + 200000, cur.y, false );
             std::printf( "moveVia(+0.2mm): ok=%d placed=%d modVias=%zu reason='%s'\n",
                          mv.ok, mv.placed, mv.modVias.size(), mv.reason.c_str() );
             std::printf( "VIA-MOVE ran (ok=%d, board-dependent)\n", mv.ok );
+            if( mv.ok ) cur.x += 200000;
 
             // Lock the via -> moveVia must refuse (deterministic).
             via->SetLocked( true );
-            gbridge::RouteChange mv2 = br.moveVia( vp.x, vp.y, vp.x + 200000, vp.y, false );
+            gbridge::RouteChange mv2 = br.moveVia( cur.x, cur.y, cur.x + 200000, cur.y, false );
             std::printf( "moveVia on LOCKED via: ok=%d reason='%s'\n", mv2.ok, mv2.reason.c_str() );
             via->SetLocked( false );
             if( mv2.ok || mv2.reason != std::string( "via locked" ) )
             { std::printf( "VIA-LOCK FAIL: locked via was not refused\n" ); return 1; }
             std::printf( "VIA-LOCK OK (locked via refused)\n" );
+
+            // shoveViaSearch: probe a few candidate offsets around the via's
+            // CURRENT position, commit the cleanest/cheapest.
+            std::vector<std::vector<double>> vcands = {
+                { (double)( cur.x + 100000 ), (double) cur.y },
+                { (double) cur.x, (double)( cur.y + 100000 ) },
+                { (double)( cur.x - 100000 ), (double) cur.y } };
+            gbridge::ShoveResult vsr = br.shoveViaSearch( cur.x, cur.y, vcands );
+            std::printf( "shoveViaSearch: committed=%d chosen=(%.0f,%.0f) cost=%.0f\n",
+                         vsr.committed, vsr.x, vsr.y, vsr.cost );
+            std::printf( "VIA-SHOVE-SEARCH ran\n" );
         }
         else
         {

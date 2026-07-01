@@ -158,5 +158,7 @@ PYBIND11_MODULE( gplan_kicad, m )
               py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ) )
         .def( "move_via", &PnsBridge::moveVia,
               py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ),
-              py::arg( "allow_violations" ) = false );
+              py::arg( "allow_violations" ) = false )
+        .def( "shove_via_search", &PnsBridge::shoveViaSearch,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "candidates" ) );
 }

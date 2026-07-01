@@ -1269,3 +1269,30 @@ DragProbe PnsBridge::probeViaMove( double x, double y, double newX, double newY 
     m_router->StopRouting();                // DISCARD — speculative only
     return pr;
 }
+
+// ---------------------------------------------------------------------------
+// Router-driven via shoving: probe candidates, commit the best one.
+// ---------------------------------------------------------------------------
+ShoveResult PnsBridge::shoveViaSearch( double x, double y,
+                                       const std::vector<std::vector<double>>& candidates )
+{
+    ShoveResult best;
+    double bestCost = 1e18, bx = 0, by = 0;
+    bool any = false;
+
+    for( const std::vector<double>& c : candidates )
+    {
+        if( c.size() < 2 )
+            continue;
+        DragProbe pr = probeViaMove( x, y, c[0], c[1] );
+        if( pr.clean && pr.cost >= 0 && pr.cost < bestCost )
+        { bestCost = pr.cost; bx = c[0]; by = c[1]; any = true; }
+    }
+    if( !any )
+        return best;
+
+    best.change     = moveVia( x, y, bx, by, false );   // commit the winner
+    best.committed  = best.change.ok;
+    best.x = bx; best.y = by; best.cost = bestCost;
+    return best;
+}
