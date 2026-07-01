@@ -197,6 +197,58 @@ static int run( int argc, char** argv )
 
     gplan::Point a{ (double) pa.x, (double) pa.y };
     gplan::Point b{ (double) pb.x, (double) pb.y };
+
+    // --- T-CORRIDOR: cascade-clear an escape from pa toward pb -------------
+    {
+        double dx = b.x - a.x, dy = b.y - a.y;
+        double dlen = std::sqrt( dx * dx + dy * dy );
+        double radius = std::min( dlen, 3000000.0 );   // cap at 3mm
+        gbridge::EscapeClearResult ec =
+            br.clearEscapeCorridor( a.x, a.y, fcu, dx, dy, radius );
+        std::printf( "clearEscapeCorridor: ok=%d iterations=%d moves=%zu "
+                     "blocking=(%.0f,%.0f)\n",
+                     ec.ok, ec.iterations, ec.moves.size(), ec.blocking.x, ec.blocking.y );
+        std::printf( "T-CORRIDOR ran (ok=%d, board-dependent)\n", ec.ok );
+    }
+
+    // --- T-CORRIDOR-2: same, but aimed at the nearest FOREIGN-net pad within
+    // 2mm, to force an actual obstruction (not just an already-open probe).
+    {
+        VECTOR2I origin = pa;
+        int originNet = -1;
+        for( FOOTPRINT* fp : board->Footprints() )
+            for( PAD* pad : fp->Pads() )
+                if( pad->GetPosition() == origin && pad->IsOnLayer( F_Cu ) )
+                { originNet = pad->GetNetCode(); break; }
+
+        VECTOR2I nearest;
+        double   nearestDist = 1e18;
+        bool     haveTarget  = false;
+        for( FOOTPRINT* fp : board->Footprints() )
+            for( PAD* pad : fp->Pads() )
+            {
+                if( pad->GetNetCode() == originNet || !pad->IsOnLayer( F_Cu ) )
+                    continue;
+                VECTOR2I p = pad->GetPosition();
+                double d = std::hypot( (double)( p.x - origin.x ), (double)( p.y - origin.y ) );
+                if( d < 8000000.0 && d < nearestDist )
+                { nearestDist = d; nearest = p; haveTarget = true; }
+            }
+
+        if( haveTarget )
+        {
+            double dx = nearest.x - origin.x, dy = nearest.y - origin.y;
+            gbridge::EscapeClearResult ec2 = br.clearEscapeCorridor(
+                origin.x, origin.y, fcu, dx, dy, nearestDist + 300000.0 );
+            std::printf( "clearEscapeCorridor(adversarial, target net!=origin, "
+                        "d=%.0f): ok=%d iterations=%d moves=%zu\n",
+                        nearestDist, ec2.ok, ec2.iterations, ec2.moves.size() );
+            std::printf( "T-CORRIDOR-2 ran (ok=%d, board-dependent)\n", ec2.ok );
+        }
+        else
+            std::printf( "T-CORRIDOR-2: no nearby foreign-net pad within 8mm; skipped\n" );
+    }
+
     auto paths = planner.plan( a, b );
     std::printf( "gplan candidates for the net: %zu\n", paths.size() );
 

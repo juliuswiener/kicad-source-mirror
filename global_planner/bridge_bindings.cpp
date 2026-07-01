@@ -113,6 +113,12 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "cost", &ShoveResult::cost )
         .def_readonly( "change", &ShoveResult::change );
 
+    py::class_<EscapeClearResult>( m, "EscapeClearResult" )
+        .def_readonly( "ok", &EscapeClearResult::ok )
+        .def_readonly( "iterations", &EscapeClearResult::iterations )
+        .def_readonly( "moves", &EscapeClearResult::moves )
+        .def_readonly( "blocking", &EscapeClearResult::blocking );
+
     py::class_<PnsBridge::TuneResult>( m, "TuneResult" )
         .def_readonly( "change", &PnsBridge::TuneResult::change )
         .def_readonly( "status", &PnsBridge::TuneResult::status )
@@ -169,5 +175,9 @@ PYBIND11_MODULE( gplan_kicad, m )
               py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ),
               py::arg( "allow_violations" ) = false )
         .def( "shove_via_search", &PnsBridge::shoveViaSearch,
-              py::arg( "x" ), py::arg( "y" ), py::arg( "candidates" ) );
+              py::arg( "x" ), py::arg( "y" ), py::arg( "candidates" ) )
+        .def( "clear_escape_corridor", &PnsBridge::clearEscapeCorridor,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ),
+              py::arg( "dir_x" ), py::arg( "dir_y" ), py::arg( "radius" ),
+              py::arg( "step_nm" ) = 100000.0, py::arg( "max_iterations" ) = 8 );
 }

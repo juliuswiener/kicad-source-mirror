@@ -134,6 +134,35 @@ if not r.ok:                                   # honest: still couldn't reach
         r = br.route_long_haul(...)            # retry the net in the freed corridor
 ```
 
+### Clearing a fanout-saturated escape (automated cascade)
+
+A pin surrounded by its own fanout (decoupling caps, GND-stitch vias, adjacent
+pin escapes on a fine-pitch QFN/BGA) can have an escape that leaves the pad
+fine but immediately re-blocks a few tenths of a mm out — each blocker you
+clear exposes the next one. Doing this by hand is: probe a direction, find
+what's in the way, `shove_via_search`/`shove_component_search` it aside, probe
+again, repeat. `clear_escape_corridor` automates exactly that loop:
+
+```python
+# Escape pin 21 heading toward the target pad, cascade-clearing blockers
+# within 1.3mm, up to 8 relocations:
+ec = br.clear_escape_corridor(pin_x, pin_y, fcu_layer,
+                              dir_x=target_x - pin_x, dir_y=target_y - pin_y,
+                              radius=1_300_000)  # nm
+if ec.ok:
+    for change in ec.moves:   # already committed, in order
+        for u, g in zip(change.mod_seg_uuids, change.mod_segs): board.modify(u, g)
+else:
+    print(f"cleared {len(ec.moves)} blockers, still stuck at {ec.blocking}")
+```
+
+It only relocates items that resolve **cleanly** via the existing shove
+primitives (same connectivity-safe guarantee as `shove_via_search`/
+`shove_component_search`) and gives up — reporting how far it got — rather
+than forcing a violation. A `false` result with several `moves` still applied
+usually means the remaining block is a placement issue, not something a few
+more relocations would fix.
+
 ### Relocating a via blocking a pin's escape corridor
 
 ```python

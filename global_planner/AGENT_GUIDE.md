@@ -464,6 +464,13 @@ multilayer routeAndCheck: ok=1 placed=1 vias=1 collided=0   F.Cu->via->B.Cu, cle
 - **Mode choice** (set in the bridge / PNS): shove (push copper aside) is the
   default; walkaround (bend new track only) is cheaper when placement is loose;
   mark-obstacles (no avoidance) only for "what's in the way" queries.
+- **Fanout-saturated pin escape (fine-pitch QFN/BGA surrounded by its own
+  decoupling/GND-stitch/adjacent-pin copper): don't manually probe→shove→
+  reprobe in a loop.** Use `clear_escape_corridor(x, y, layer, dir_x, dir_y,
+  radius)` — it's the exact same cascade, automated (README § "Clearing a
+  fanout-saturated escape"). If it comes back `ok=false` after relocating
+  several items, that's a real signal: the escape needs placement rework, not
+  more router calls — it already tried the cheap fix.
 
 ---
 

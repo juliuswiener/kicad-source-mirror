@@ -120,6 +120,17 @@ struct ShoveResult
     RouteChange change;              // the committed change stream (when committed)
 };
 
+// T-CORRIDOR — result of clearEscapeCorridor: the cascade of relocations it
+// committed while trying to open a straight probe from the escape point
+// toward the target direction.
+struct EscapeClearResult
+{
+    bool                     ok         = false;   // final probe succeeded
+    int                      iterations = 0;       // relocation attempts made
+    std::vector<RouteChange> moves;                // one per committed relocation, in order
+    gplan::Point             blocking;              // final blocked point (only meaningful if !ok)
+};
+
 class PnsBridge
 {
 public:
@@ -269,6 +280,19 @@ public:
     // shoveComponentSearch, for a single via. `candidates` is a list of {nx,ny}.
     ShoveResult shoveViaSearch( double x, double y,
                                const std::vector<std::vector<double>>& candidates );
+
+    // T-CORRIDOR — automate the manual cascade-clearing pattern (relocate the
+    // nearest blocker, retry, repeat) for a fanout-saturated escape: probe a
+    // straight line from (x,y,pnsLayer) toward (x+dirX*radius, y+dirY*radius);
+    // if blocked, find the nearest movable board item (via or footprint pad,
+    // skipping locked ones) to the blocking point within `radius` of (x,y),
+    // shove it outward via shoveViaSearch/shoveComponentSearch (8-direction
+    // grid at `stepNm`), and retry the probe. Up to `maxIterations` relocations.
+    // Stops as soon as the probe succeeds, a relocation attempt fails to find
+    // any clean candidate, or no movable item remains within radius.
+    EscapeClearResult clearEscapeCorridor( double x, double y, int pnsLayer,
+                                           double dirX, double dirY, double radius,
+                                           double stepNm = 100000.0, int maxIterations = 8 );
 
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }

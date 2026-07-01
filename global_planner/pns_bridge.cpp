@@ -1296,3 +1296,95 @@ ShoveResult PnsBridge::shoveViaSearch( double x, double y,
     best.x = bx; best.y = by; best.cost = bestCost;
     return best;
 }
+
+namespace {
+double dist2D( double ax, double ay, double bx, double by )
+{
+    double dx = ax - bx, dy = ay - by;
+    return std::sqrt( dx * dx + dy * dy );
+}
+
+// 8-direction grid around (x,y), step apart (the same pattern the shoveVia/
+// shoveComponentSearch examples in the README use).
+std::vector<std::vector<double>> radialCandidates( double x, double y, double step )
+{
+    std::vector<std::vector<double>> out;
+    for( double dx : { -step, 0.0, step } )
+        for( double dy : { -step, 0.0, step } )
+            if( dx != 0.0 || dy != 0.0 )
+                out.push_back( { x + dx, y + dy } );
+    return out;
+}
+} // namespace
+
+EscapeClearResult PnsBridge::clearEscapeCorridor( double x, double y, int pnsLayer,
+                                                  double dirX, double dirY, double radius,
+                                                  double stepNm, int maxIterations )
+{
+    EscapeClearResult result;
+
+    double dlen = std::sqrt( dirX * dirX + dirY * dirY );
+    if( dlen < 1e-9 )
+        return result;
+    double ux = dirX / dlen, uy = dirY / dlen;
+    double probeX = x + ux * radius, probeY = y + uy * radius;
+
+    for( result.iterations = 0; result.iterations < maxIterations; ++result.iterations )
+    {
+        std::vector<gplan::Waypoint> wps = { { { x, y }, pnsLayer },
+                                             { { probeX, probeY }, pnsLayer } };
+        RouteResult rr = routeAndCheck( wps );
+        if( rr.ok )
+        {
+            result.ok = true;
+            return result;
+        }
+        result.blocking = rr.blocking;
+
+        // Nearest movable item (via or footprint pad, not locked) to the
+        // blocking point, restricted to within `radius` of the escape origin.
+        double bestDist = 1e18;
+        double bestX = 0, bestY = 0;
+        bool   bestIsVia = false, found = false;
+
+        for( PCB_TRACK* t : m_board->Tracks() )
+        {
+            if( t->Type() != PCB_VIA_T || t->IsLocked() )
+                continue;
+            VECTOR2I p = t->GetPosition();
+            if( dist2D( p.x, p.y, x, y ) > radius )
+                continue;
+            double d = dist2D( p.x, p.y, rr.blocking.x, rr.blocking.y );
+            if( d < bestDist )
+            { bestDist = d; bestX = p.x; bestY = p.y; bestIsVia = true; found = true; }
+        }
+
+        for( FOOTPRINT* fp : m_board->Footprints() )
+        {
+            if( fp->IsLocked() )
+                continue;
+            for( PAD* pad : fp->Pads() )
+            {
+                VECTOR2I p = pad->GetPosition();
+                if( dist2D( p.x, p.y, x, y ) > radius )
+                    continue;
+                double d = dist2D( p.x, p.y, rr.blocking.x, rr.blocking.y );
+                if( d < bestDist )
+                { bestDist = d; bestX = p.x; bestY = p.y; bestIsVia = false; found = true; }
+            }
+        }
+
+        if( !found )
+            return result;   // nothing left within radius to clear
+
+        std::vector<std::vector<double>> cands = radialCandidates( bestX, bestY, stepNm );
+        ShoveResult sr = bestIsVia ? shoveViaSearch( bestX, bestY, cands )
+                                   : shoveComponentSearch( bestX, bestY, cands );
+        if( !sr.committed )
+            return result;   // stuck: nearest blocker has no clean relocation
+
+        result.moves.push_back( sr.change );
+    }
+
+    return result;
+}
