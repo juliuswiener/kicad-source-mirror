@@ -153,5 +153,10 @@ PYBIND11_MODULE( gplan_kicad, m )
               py::arg( "waypoints" ) )
         .def( "tune_length", &PnsBridge::tuneLength,
               py::arg( "x" ), py::arg( "y" ), py::arg( "end_x" ), py::arg( "end_y" ),
-              py::arg( "pns_layer" ), py::arg( "target_length_nm" ) );
+              py::arg( "pns_layer" ), py::arg( "target_length_nm" ) )
+        .def( "probe_via_move", &PnsBridge::probeViaMove,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ) )
+        .def( "move_via", &PnsBridge::moveVia,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ),
+              py::arg( "allow_violations" ) = false );
 }

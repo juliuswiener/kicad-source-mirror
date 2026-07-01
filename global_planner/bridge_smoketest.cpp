@@ -95,6 +95,43 @@ static int run( int argc, char** argv )
     }
     std::printf( "bridge attached, PNS world synced\n" );
 
+    // --- T-VIA: relocate a single via (stitching-via-blocks-escape scenario).
+    // Run on the freshly-synced world, before any world-mutating test below can
+    // shift/shove this via's position and cause a spurious QueryHoverItems miss.
+    {
+        PCB_VIA* via = nullptr;
+        for( PCB_TRACK* t : board->Tracks() )
+            if( t->Type() == PCB_VIA_T ) { via = static_cast<PCB_VIA*>( t ); break; }
+
+        if( via )
+        {
+            VECTOR2I vp = via->GetPosition();
+            std::printf( "T-VIA: via at (%d,%d)\n", vp.x, vp.y );
+
+            gbridge::DragProbe pv = br.probeViaMove( vp.x, vp.y, vp.x + 200000, vp.y );
+            std::printf( "probeViaMove(+0.2mm): clean=%d cost=%.0f shoved=%d\n",
+                         pv.clean, pv.cost, pv.shoved );
+
+            gbridge::RouteChange mv = br.moveVia( vp.x, vp.y, vp.x + 200000, vp.y, false );
+            std::printf( "moveVia(+0.2mm): ok=%d placed=%d modVias=%zu reason='%s'\n",
+                         mv.ok, mv.placed, mv.modVias.size(), mv.reason.c_str() );
+            std::printf( "VIA-MOVE ran (ok=%d, board-dependent)\n", mv.ok );
+
+            // Lock the via -> moveVia must refuse (deterministic).
+            via->SetLocked( true );
+            gbridge::RouteChange mv2 = br.moveVia( vp.x, vp.y, vp.x + 200000, vp.y, false );
+            std::printf( "moveVia on LOCKED via: ok=%d reason='%s'\n", mv2.ok, mv2.reason.c_str() );
+            via->SetLocked( false );
+            if( mv2.ok || mv2.reason != std::string( "via locked" ) )
+            { std::printf( "VIA-LOCK FAIL: locked via was not refused\n" ); return 1; }
+            std::printf( "VIA-LOCK OK (locked via refused)\n" );
+        }
+        else
+        {
+            std::printf( "T-VIA: no via on board; skipped\n" );
+        }
+    }
+
     std::vector<gplan::Obstacle> obs = br.getAllObstacles();
     size_t fixed = 0, movable = 0;
     for( const auto& o : obs ) ( o.fixed ? fixed : movable )++;

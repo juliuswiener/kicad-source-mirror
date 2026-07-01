@@ -243,6 +243,24 @@ public:
     TuneResult tuneLength( double x, double y, double endX, double endY,
                            int pnsLayer, long long targetLengthNm );
 
+    // T-VIA — relocate a single existing via (PNS DM_VIA drag: connectivity-
+    // safe, shoves any tracks landing on it as needed — same family as
+    // dragComponent/probeDrag but for one via instead of a whole footprint).
+    // Use case: a stitching via sitting in a pin's escape corridor — move it
+    // out of the way without breaking its GND-plane connection.
+    //
+    // probeViaMove: speculative — try, evaluate, DISCARD (no commit). The
+    // primitive for a placement search (e.g. try several offsets, keep the
+    // clean/cheapest one via moveVia).
+    DragProbe probeViaMove( double x, double y, double newX, double newY );
+
+    // moveVia: move the via at (x,y) to (newX,newY). Commits only if the move
+    // is clean (or allowViolations=true). Returns the change stream (host
+    // moves the existing via by uuid to (newX,newY) and applies any track
+    // mods by uuid — same lossless contract as dragComponent).
+    RouteChange moveVia( double x, double y, double newX, double newY,
+                        bool allowViolations = false );
+
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }
 
