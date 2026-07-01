@@ -1,6 +1,7 @@
-// perf_tests.cpp — T5 spatial-cull timing gate.
-// Correctness (paths unchanged) is guaranteed by exact AABB pruning and verified
-// by tests.cpp; here we only assert the graph build scales acceptably.
+// perf_tests.cpp — T5 (AABB cull) + T-GRID (spatial hash) timing gate.
+// Correctness (paths unchanged) is guaranteed by exact culling/hashing (T5's
+// AABB check still runs on every grid-query result) and verified by tests.cpp;
+// here we only assert the graph build scales acceptably.
 
 #include "planner_core.h"
 #include <cstdio>
@@ -18,7 +19,7 @@ static Polygon box( double cx, double cy, double s )
 int main()
 {
     int fail = 0;
-    for( int N : { 50, 100, 200 } )
+    for( int N : { 50, 100, 200, 500, 885 } )
     {
         std::vector<Obstacle> obs;
         for( int i = 0; i < N; ++i )
@@ -31,15 +32,20 @@ int main()
 
         auto t0 = std::chrono::high_resolution_clock::now();
         int reps = 20; size_t got = 0;
-        for( int r = 0; r < reps; ++r ) got = pl.plan( { 0, 0 }, { 31, 16 } ).size();
+        for( int r = 0; r < reps; ++r )
+            got = pl.plan( { 0, 0 }, { ( N % 20 ) * 1.5 + 30.0, ( N / 20 ) * 1.5 } ).size();
         auto t1 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>( t1 - t0 ).count() / reps;
 
         std::printf( "N=%-4d  %.2f ms/plan  (%zu paths)\n", N, ms, got );
-        // Pre-cull brute force was ~370 ms at N=200; pruned must be well under.
+        // Pre-T-GRID: N=200 brute force ~370ms; pre-T5 same ballpark. With T5+
+        // T-GRID: N=200 ~28ms, N=885 ~750ms (kubic -> ~quadratic in N; the
+        // remaining O(n^2) is the buildEdges() node-PAIR enumeration itself,
+        // not the per-edge obstacle scan T-GRID fixed — see ROADMAP.md 2.2).
         // Skip the timing bound under sanitizers (instrumentation dominates).
 #if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
         if( N == 200 && ms > 200.0 ) { std::printf( "  FAIL: N=200 too slow\n" ); fail++; }
+        if( N == 885 && ms > 3000.0 ) { std::printf( "  FAIL: N=885 too slow\n" ); fail++; }
 #endif
         if( got == 0 ) { std::printf( "  FAIL: no path\n" ); fail++; }
     }

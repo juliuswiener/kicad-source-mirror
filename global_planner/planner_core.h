@@ -117,8 +117,38 @@ private:
     // plan()). One Planner per worker is still the recommended pattern; this
     // makes plan()/bumpCongestion safe to call concurrently on ONE instance.
     mutable std::mutex          m_mutex;
+    // Reusable scratch buffer for SpatialGrid::queryInto results — avoids a
+    // heap allocation on every edgeBlocked/edgeWeight/viaSiteClear call.
+    mutable std::vector<int>    m_queryBuf;
 
     struct AABB { double x0, y0, x1, y1; };   // T5: per-hull bounding box for culling
+
+    // T-GRID — uniform spatial hash over hull AABBs. edgeBlocked/edgeWeight/
+    // viaSiteClear/insideAnyBlock used to scan ALL m hulls per candidate edge
+    // (O(n^2 * m) total for the O(n^2) edge candidates alone) — the AABB check
+    // (T5) only skips the expensive polygon test, not the scan itself. A grid
+    // query returns just the hulls near the segment/point (O(k), k << m for
+    // spread-out PCB layouts), cutting graph build to near O(n^2 * k). Built
+    // once per obstacle set in buildLayers(); read-only after (safe under the
+    // mutex plan() already holds for the whole rebuild).
+    struct SpatialGrid
+    {
+        double cell = 1.0, ox = 0.0, oy = 0.0;
+        int    nx = 1, ny = 1;
+        std::vector<std::vector<int>> cells;          // cells[cy*nx+cx] -> hull indices
+        mutable std::vector<int> epoch;                // per-hull last-seen query id (dedup)
+        mutable int epochCounter = 0;
+
+        void build( const std::vector<AABB>& boxes );
+        // Appends every hull index whose AABB may overlap [x0,y0]-[x1,y1] into
+        // `out`, each at most once (per-grid epoch dedup, no per-query alloc).
+        void queryInto( double x0, double y0, double x1, double y1,
+                        std::vector<int>& out ) const;
+
+    private:
+        int cellX( double x ) const;
+        int cellY( double y ) const;
+    };
 
     // Per-layer configuration-space data (keyed by layer id).
     struct LayerData
@@ -129,6 +159,13 @@ private:
         std::vector<Polygon> movable;       // for congestion
         // Parallel AABBs (T5 spatial cull): index-aligned with the lists above.
         std::vector<AABB>    fixedOrigBox, fixedBlockBox, movableBox;
+        // fixedGrid indexes fixedBlockBox (the OUTER of the two fixed boxes —
+        // fixedBlock is fixedOrig offset outward by margin-eps, so
+        // fixedBlockBox ⊇ fixedOrigBox — same index space, one grid serves both
+        // fixedOrig and fixedBlock queries; the existing per-hull AABB check
+        // still runs after, so this can only add candidates, never drop valid
+        // ones). movableGrid indexes movableBox separately.
+        SpatialGrid fixedGrid, movableGrid;
     };
     std::vector<LayerData> m_layerData;      // indexed by stackPos()
 

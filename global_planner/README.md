@@ -189,13 +189,40 @@ Caveats:
 
 ## Performance & scaling
 
-Graph build is ~O(n³) in the obstacle count n (n=20 → ~0.9 ms, n=100 → ~60 ms,
-n=200 → ~370 ms per `plan()`, single core). For the intended use — *local*
-"last-bits" routing — feed only obstacles in the route's neighbourhood (the
-bridge's `getObstacles` can be bounded to a bbox around start/target); n then
-stays in the tens and each plan is sub-10 ms. For a 100-target evaluation loop,
-reuse one `Planner` and run targets across worker processes (the core is
-stateless between `plan()` calls except for `bumpCongestion`).
+**T-GRID (uniform spatial hash)**: `edgeBlocked`/`edgeWeight`/`viaSiteClear`/
+`insideAnyBlock` used to linearly scan **every** fixed/movable hull per
+candidate edge/point — the AABB check (T5) only skipped the expensive polygon
+test, not the O(m) scan itself, making graph build ~O(n²·m) (n = graph nodes,
+m = obstacle count; with n ~ 4m for box hulls this is the O(n³) below). A
+per-layer grid (`SpatialGrid`, cell ≈ average hull size) now returns only the
+**nearby** hulls per query, cutting the scan to ~O(k) (k ≪ m). Verified
+bit-identical output on all fixtures (ctest + both real-board smoketests); the
+grid only narrows *candidates*, the exact AABB/polygon test still runs after.
+
+Result — `perf_tests.cpp`, single core:
+
+| n (obstacles) | before (brute force / T5-only) | after (T-GRID) |
+|---|---|---|
+| 200 | ~370 ms | ~24-28 ms (**13-15×**) |
+| 500 | *(untested — would time out)* | ~190 ms |
+| 885 | *(untested — would time out)* | ~700-750 ms |
+
+Real-world case: a session with 885 board obstacles that previously threatened
+to time out `route_long_haul` now completes a `plan()` call in under a second.
+
+**Remaining bottleneck** (kubic → now quasi-**quadratic**, not linear): T-GRID
+fixed the *per-edge obstacle scan*; `buildEdges()`'s outer loop still enumerates
+**every node pair** (`for i; for j>i`) as an edge *candidate* — that O(n²) node-
+pair enumeration is untouched. The next step (not yet done) is bounding
+candidate generation itself to spatially-nearby node pairs (k-nearest-neighbour
+query per node via the same grid) instead of all-pairs — see `ROADMAP.md` 2.2.
+
+For the intended use — *local* "last-bits" routing — feed only obstacles in the
+route's neighbourhood (the bridge's `getObstacles` can be bounded to a bbox
+around start/target); n then stays in the tens and each plan is sub-10 ms. For
+a 100-target evaluation loop, reuse one `Planner` and run targets across worker
+processes (the core is stateless between `plan()` calls except for
+`bumpCongestion`).
 
 ## Bridge smoketest (real link + runtime against KiCad/PNS)
 

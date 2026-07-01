@@ -44,11 +44,18 @@ ways around obstacles, not just cost variants [Bhattacharya10]. Add a
 diversity/dissimilarity filter so the k returned paths spread across homotopy
 classes.
 
-### 2.2 Spatial index for graph build ★★★ (L) — `planner_core.cpp:336`
-`buildEdges` is O(n²·m) ≈ O(n³): every candidate edge tests every hull. Add an
-**R-tree** (`boost::geometry::index::rtree`) over fixed/movable hulls; query only
-hulls near each edge → ~O(n² log n), and enables board-wide planning instead of
-hand-culled regions. [boost.geometry, Repos]
+### 2.2 Spatial index for graph build ★★★ (L) — `planner_core.cpp:336` — **PARTIALLY DONE**
+`buildEdges` was O(n²·m) ≈ O(n³): every candidate edge tested every hull.
+**Done**: a per-layer uniform grid (`SpatialGrid` — no Boost, stays dependency-
+free) now answers "hulls near this edge/point" in ~O(k) instead of ~O(m),
+verified bit-identical (ctest + both real-board smoketests). n=200: 370ms→24ms
+(13×); n=885 (real large-session obstacle count): now ~700ms (was untested/
+would time out) — see README § Performance & scaling.
+**Still open**: the O(n²) node-**pair** enumeration in `buildEdges`'s outer
+loop itself (every node tested against every other node as an edge candidate)
+is untouched — that's the remaining quasi-quadratic term. Next step: bound
+candidate generation to spatially-nearby node pairs (k-nearest-neighbour query
+per node via the same grid) instead of all-pairs, to get to ~O(n log n).
 
 ### 2.3 Swept-polygon edge blocking ★★ (M) — `planner_core.cpp:270`
 24-point sampling can miss thin obstacles and is wasteful elsewhere. Build the

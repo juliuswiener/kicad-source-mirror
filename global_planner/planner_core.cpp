@@ -228,6 +228,80 @@ Planner::Planner( std::vector<Obstacle> obstacles, PlannerParams params )
     buildLayers();
 }
 
+// T-GRID — uniform spatial hash. Cell size ~ average hull AABB extent, so a
+// typical hull touches O(1) cells and a typical query returns O(1) candidates
+// regardless of total hull count m.
+int Planner::SpatialGrid::cellX( double x ) const
+{ return std::clamp( (int) ( ( x - ox ) / cell ), 0, nx - 1 ); }
+int Planner::SpatialGrid::cellY( double y ) const
+{ return std::clamp( (int) ( ( y - oy ) / cell ), 0, ny - 1 ); }
+
+void Planner::SpatialGrid::build( const std::vector<AABB>& boxes )
+{
+    epoch.assign( boxes.size(), 0 );
+    epochCounter = 0;
+    cells.clear();
+
+    if( boxes.empty() )
+    {
+        nx = ny = 1;
+        cells.assign( 1, {} );
+        return;
+    }
+
+    double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300, avgW = 0, avgH = 0;
+    for( const AABB& b : boxes )
+    {
+        x0 = std::min( x0, b.x0 ); y0 = std::min( y0, b.y0 );
+        x1 = std::max( x1, b.x1 ); y1 = std::max( y1, b.y1 );
+        avgW += b.x1 - b.x0; avgH += b.y1 - b.y0;
+    }
+    avgW /= boxes.size(); avgH /= boxes.size();
+    cell = std::max( 1.0, std::max( avgW, avgH ) );   // cell ~ typical hull size
+    ox = x0; oy = y0;
+
+    auto dims = [&]()
+    {
+        nx = std::max( 1, (int) std::ceil( ( x1 - x0 ) / cell ) + 1 );
+        ny = std::max( 1, (int) std::ceil( ( y1 - y0 ) / cell ) + 1 );
+    };
+    dims();
+    // Guard against a pathological aspect ratio (e.g. one huge board-edge box
+    // dragging avgW/avgH tiny) blowing up cell count / memory.
+    long long total = (long long) nx * (long long) ny;
+    if( total > 4'000'000 )
+    {
+        cell *= std::sqrt( (double) total / 4'000'000.0 );
+        dims();
+    }
+    cells.assign( (size_t) nx * (size_t) ny, {} );
+
+    for( size_t i = 0; i < boxes.size(); ++i )
+    {
+        const AABB& b = boxes[i];
+        int cx0 = cellX( b.x0 ), cx1 = cellX( b.x1 );
+        int cy0 = cellY( b.y0 ), cy1 = cellY( b.y1 );
+        for( int cy = cy0; cy <= cy1; ++cy )
+            for( int cx = cx0; cx <= cx1; ++cx )
+                cells[ (size_t) cy * nx + cx ].push_back( (int) i );
+    }
+}
+
+void Planner::SpatialGrid::queryInto( double x0, double y0, double x1, double y1,
+                                      std::vector<int>& out ) const
+{
+    ++epochCounter;
+    int cx0 = cellX( x0 ), cx1 = cellX( x1 );
+    int cy0 = cellY( y0 ), cy1 = cellY( y1 );
+    if( cx0 > cx1 ) std::swap( cx0, cx1 );
+    if( cy0 > cy1 ) std::swap( cy0, cy1 );
+    for( int cy = cy0; cy <= cy1; ++cy )
+        for( int cx = cx0; cx <= cx1; ++cx )
+            for( int idx : cells[ (size_t) cy * nx + cx ] )
+                if( epoch[idx] != epochCounter )
+                { epoch[idx] = epochCounter; out.push_back( idx ); }
+}
+
 int Planner::stackPos( int layer ) const
 {
     for( size_t i = 0; i < m_params.layers.size(); ++i )
@@ -274,6 +348,14 @@ void Planner::buildLayers()
             ld.movable.push_back( ob.poly );
         }
     }
+
+    // T-GRID: index each layer's hulls once (see SpatialGrid comment in the
+    // header for why fixedGrid is built over fixedBlockBox, the outer box).
+    for( LayerData& ld : m_layerData )
+    {
+        ld.fixedGrid.build( ld.fixedBlockBox );
+        ld.movableGrid.build( ld.movableBox );
+    }
 }
 
 void Planner::bumpCongestion( Point where, double radius, double factor )
@@ -310,10 +392,15 @@ void Planner::buildNodes( Point start, int sL, Point target, int tL )
             for( const Point& v : hull )
                 xy.push_back( v );
 
+    // point-in-polygon implies point-in-AABB, so an unpadded point query is
+    // exact — no need to grow the search box.
     auto insideAnyBlock = [&]( Point p, int sp )
     {
-        for( const Polygon& b : m_layerData[sp].fixedBlock )
-            if( pointInPolygon( p, b ) )
+        const LayerData& ld = m_layerData[sp];
+        m_queryBuf.clear();
+        ld.fixedGrid.queryInto( p.x, p.y, p.x, p.y, m_queryBuf );
+        for( int i : m_queryBuf )
+            if( pointInPolygon( p, ld.fixedBlock[i] ) )
                 return true;
         return false;
     };
@@ -341,9 +428,12 @@ bool Planner::edgeBlocked( Point a, Point b, int layer ) const
         return true;
     const LayerData& ld = m_layerData[sp];
     double sx0 = segLo(a.x,b.x), sy0 = segLo(a.y,b.y), sx1 = segHi(a.x,b.x), sy1 = segHi(a.y,b.y);
-    for( size_t i = 0; i < ld.fixedBlock.size(); ++i )
+
+    m_queryBuf.clear();
+    ld.fixedGrid.queryInto( sx0, sy0, sx1, sy1, m_queryBuf );        // T-GRID: candidates only
+    for( int i : m_queryBuf )
     {
-        const AABB& bx = ld.fixedBlockBox[i];                       // T5: cull non-overlap
+        const AABB& bx = ld.fixedBlockBox[i];                       // T5: exact cull (grid is coarse)
         if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) > 0.0 )
             continue;
         const Polygon& block = ld.fixedBlock[i];
@@ -364,9 +454,14 @@ bool Planner::viaSiteClear( Point p, int layer ) const
         return false;
     double viaMargin = m_params.viaClearance + m_params.viaDiameter / 2.0;
     const LayerData& ld = m_layerData[sp];
-    for( size_t i = 0; i < ld.fixedOrig.size(); ++i )
+
+    m_queryBuf.clear();
+    // Search box padded by viaMargin: anything farther than that can't matter.
+    ld.fixedGrid.queryInto( p.x - viaMargin, p.y - viaMargin,
+                            p.x + viaMargin, p.y + viaMargin, m_queryBuf );
+    for( int i : m_queryBuf )
     {
-        const AABB& bx = ld.fixedOrigBox[i];                        // T5: cull far hulls
+        const AABB& bx = ld.fixedOrigBox[i];                        // T5: exact cull
         if( aabbDist( p.x, p.y, p.x, p.y, bx.x0, bx.y0, bx.x1, bx.y1 ) >= viaMargin )
             continue;
         if( distPointPolygon( p, ld.fixedOrig[i] ) < viaMargin )
@@ -383,13 +478,31 @@ double Planner::edgeWeight( Point a, Point b, int layer ) const
     const LayerData& ld = m_layerData[stackPos( layer )];
     double sx0 = segLo(a.x,b.x), sy0 = segLo(a.y,b.y), sx1 = segHi(a.x,b.x), sy1 = segHi(a.y,b.y);
 
+    // dFix wants the nearest fixed hull with NO fixed search radius (unlike
+    // edgeBlocked/viaSiteClear/usage below), so the grid query starts at one
+    // cell and doubles until it finds candidates — exact same result as the
+    // old unbounded linear scan, just without touching every one of the m
+    // hulls when the nearby ones already answer it.
     double dFix = std::numeric_limits<double>::max();
-    for( size_t i = 0; i < ld.fixedOrig.size(); ++i )
     {
-        const AABB& bx = ld.fixedOrigBox[i];                        // T5: prune if box can't beat dFix
-        if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) >= dFix )
-            continue;
-        dFix = std::min( dFix, distSegPolygon( a, b, ld.fixedOrig[i] ) );
+        double r = std::max( pitch, ld.fixedGrid.cell );
+        for( int ring = 0; ring < 12; ++ring )
+        {
+            m_queryBuf.clear();
+            ld.fixedGrid.queryInto( sx0 - r, sy0 - r, sx1 + r, sy1 + r, m_queryBuf );
+            if( !m_queryBuf.empty() )
+                break;
+            if( ld.fixedGrid.nx == 1 && ld.fixedGrid.ny == 1 )
+                break;                                  // whole grid is one cell; no point growing
+            r *= 2;
+        }
+        for( int i : m_queryBuf )
+        {
+            const AABB& bx = ld.fixedOrigBox[i];                    // T5: prune if box can't beat dFix
+            if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) >= dFix )
+                continue;
+            dFix = std::min( dFix, distSegPolygon( a, b, ld.fixedOrig[i] ) );
+        }
     }
     if( dFix == std::numeric_limits<double>::max() )
         dFix = 10.0 * pitch;
@@ -398,9 +511,11 @@ double Planner::edgeWeight( Point a, Point b, int layer ) const
     double capacity = std::max( 1.0, std::floor( gap / pitch ) );
 
     double usage = 0.0;
-    for( size_t i = 0; i < ld.movable.size(); ++i )
+    m_queryBuf.clear();
+    ld.movableGrid.queryInto( sx0 - margin, sy0 - margin, sx1 + margin, sy1 + margin, m_queryBuf );
+    for( int i : m_queryBuf )
     {
-        const AABB& bx = ld.movableBox[i];                          // T5: cull beyond margin
+        const AABB& bx = ld.movableBox[i];                          // T5: exact cull
         if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) >= margin )
             continue;
         if( distSegPolygon( a, b, ld.movable[i] ) < margin )
