@@ -142,6 +142,7 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.10 | **Board outline + soft keepouts** | `board->GetBoardPolygonOutlines()`; zone priority | stop routing off-board; soft keepouts as cost not hard block | S | ★★ |
 | 4.11 | **Real `Hull()` not bbox** | `pns_bridge.cpp:92` `bboxPoly` → `pad->GetEffectivePolygon`/PNS `Hull()` | tighter packing; less false congestion | M | ★★★ |
 | 4.12 | **LOGGER replay** | `LOGGER` (pns_logger.h:48), `FormatLogFileAsJSON` | regression capture, audit, deterministic replay | S | ★ |
+| 4.13 | **Zone-antipad pre-carve** — **DONE** | `gplan_zone_refill` (`global_planner/zone_refill_tool.cpp`), real `ZONE_FILLER::Fill()` | breaks the plane-via chicken-egg (via has no antipad until a fill runs WITH it present) found on a real board (RST_N/XVF3800 case study); a separate binary since real `ZONE_FILLER` only lives in `pcbnew_kiface_objects`, which conflicts symbol-for-symbol with the QA mocks the bridge/smoketest link for a light build | S | ★★★ |
 
 (4.11 is listed here too because it's the bridge data-quality fix with the widest downstream effect.)
 

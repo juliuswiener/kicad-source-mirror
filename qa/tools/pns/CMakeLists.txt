@@ -198,6 +198,22 @@ if( pybind11_FOUND )
     )
 endif()
 
+# --- gplan_zone_refill: standalone real-ZONE_FILLER helper (see global_planner/
+# zone_refill_tool.cpp for why this is a SEPARATE binary from the smoketest/
+# kicad module above: real ZONE_FILLER::Fill() only lives in pcbnew_kiface_objects,
+# which conflicts symbol-for-symbol with qa_utils/mocks.cpp used by those targets).
+add_executable( gplan_zone_refill
+    ../../../global_planner/zone_refill_tool.cpp
+)
+target_compile_definitions( gplan_zone_refill PRIVATE PCBNEW )
+add_dependencies( gplan_zone_refill pcbnew )
+target_link_libraries( gplan_zone_refill
+    pcbnew_kiface_objects 3d-viewer connectivity pcbcommon pnsrouter kicommon
+    kiplatform common gal core idf3 markdown_lib
+    ${PCBNEW_IO_LIBRARIES} ${wxWidgets_LIBRARIES} ${GDI_PLUS_LIBRARIES}
+    Boost::headers ${PCBNEW_EXTRA_LIBS}
+)
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}

@@ -337,6 +337,14 @@ waypoint list. For trivial open routes a 2-point path is fine and faster.
   placed (verified `vias=1` on a real F.Cu→B.Cu route).
 - Raise `viaCost` to keep routes on one layer; lower it where layer changes are
   cheap/expected.
+- **Via crossing a plane zone (inner-layer via, GND/power pour): expect a
+  rejection with `vias=0`/`added=0` the first time.** The plane has no antipad
+  for a via that doesn't exist yet — KiCad only carves clearance holes at zone-
+  fill time, and a freshly loaded board's fill predates your via. `gplan_zone_refill`
+  (`qa/tools/pns/gplan_zone_refill board.kicad_pcb --add-via x y drill dia net
+  top bottom`, units = nm) inserts the via and runs the real zone filler in one
+  pass, then re-`load()` the board — the via now collision-checks clean. See
+  README § "Placing an inner-layer via that crosses a plane zone".
 
 ---
 

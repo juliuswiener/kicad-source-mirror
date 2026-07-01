@@ -148,6 +148,39 @@ if sr.committed:
 #                                 if pv.clean: br.move_via(vx, vy, nx, ny)
 ```
 
+### Placing an inner-layer via that crosses a plane zone (the antipad chicken-egg)
+
+A via crossing a plane zone (e.g. GND/power pour on an inner layer) has no
+clearance hole until SOME zone fill has run with that via already present —
+KiCad computes antipads at fill time, not at via-placement time. A freshly
+loaded board's zone fill is whatever the last GUI save baked in, which never
+includes a via you're about to add. `route_and_commit`/`move_via` check
+collisions against that stale fill and reject the via before the antipad can
+exist.
+
+`gplan_zone_refill` (built alongside the smoketest, `qa/tools/pns/gplan_zone_refill`)
+is a **separate** headless CLI that runs the real KiCad `ZONE_FILLER` — it isn't
+part of the bridge library itself (see its header comment for why: real
+`ZONE_FILLER::Fill()` only exists in `pcbnew_kiface_objects`, which conflicts
+symbol-for-symbol with the QA mocks `pns_bridge.cpp`/`bridge_smoketest.cpp`
+link for a fast, lightweight build). Run it as a pre-step, then re-load:
+
+```bash
+# Insert the candidate via and carve its antipad in one pass (units = nm):
+qa/tools/pns/gplan_zone_refill board.kicad_pcb \
+    --add-via 150000000 90000000 300000 600000 GND F.Cu In3.Cu
+# -> "ZONES REFILLED: <n>"; board.kicad_pcb now has the via AND its clearance
+#    hole in every zone it crosses. Re-load in gplan_kicad: the via now
+#    collision-checks clean against the (now-correct) plane fill.
+```
+
+```python
+br = gplan_kicad.PnsBridge(); br.load("board.kicad_pcb")   # picks up the refill
+```
+
+Without `--add-via`, it just re-runs the zone filler on the board as-is (e.g.
+after any other tool wrote raw geometry without updating fills).
+
 ## API
 
 ```cpp
