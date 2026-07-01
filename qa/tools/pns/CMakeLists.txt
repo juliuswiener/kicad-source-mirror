@@ -169,6 +169,34 @@ target_link_libraries( gplan_bridge_smoketest
     Boost::headers ${PCBNEW_EXTRA_LIBS}
 )
 
+# --- gplan_kicad: the bridge as a Python module (pybind11) -------------------
+# Same sources + libs as the smoketest, but bridge_bindings.cpp (PYBIND11_MODULE)
+# instead of bridge_smoketest.cpp's main(), and pns_bridge_load.cpp for load().
+find_package( pybind11 CONFIG QUIET )
+if( pybind11_FOUND )
+    pybind11_add_module( gplan_kicad MODULE
+        ${COMMON_SRCS}
+        ../../qa_utils/pcb_test_frame.cpp
+        ../../qa_utils/pcb_test_selection_tool.cpp
+        ../../qa_utils/test_app_main.cpp
+        ../../qa_utils/utility_program.cpp
+        ../../qa_utils/mocks.cpp
+        ../../../global_planner/planner_core.cpp
+        ../../../global_planner/pns_bridge.cpp
+        ../../../global_planner/pns_bridge_load.cpp
+        ../../../global_planner/bridge_bindings.cpp
+    )
+    target_compile_definitions( gplan_kicad PRIVATE PCBNEW TEST_APP_NO_MAIN )
+    add_dependencies( gplan_kicad pcbnew )
+    target_include_directories( gplan_kicad PRIVATE ${CMAKE_SOURCE_DIR}/global_planner )
+    target_link_libraries( gplan_kicad PRIVATE
+        qa_pcbnew_utils connectivity pcbcommon pnsrouter gal common gal qa_utils
+        dxflib_qcad tinyspline_lib nanosvg idf3 pcbcommon markdown_lib 3d-viewer
+        ${PCBNEW_IO_LIBRARIES} ${wxWidgets_LIBRARIES} ${GDI_PLUS_LIBRARIES}
+        Boost::headers ${PCBNEW_EXTRA_LIBS}
+    )
+endif()
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}

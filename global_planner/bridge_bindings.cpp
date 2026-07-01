@@ -113,6 +113,12 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "cost", &ShoveResult::cost )
         .def_readonly( "change", &ShoveResult::change );
 
+    py::class_<PnsBridge::TuneResult>( m, "TuneResult" )
+        .def_readonly( "change", &PnsBridge::TuneResult::change )
+        .def_readonly( "status", &PnsBridge::TuneResult::status )
+        .def_readonly( "current_length", &PnsBridge::TuneResult::currentLength )
+        .def_readonly( "target_length", &PnsBridge::TuneResult::targetLength );
+
     auto bridge = py::class_<PnsBridge>( m, "PnsBridge" );
     py::enum_<PnsBridge::RouteMode>( bridge, "RouteMode" )   // T12
         .value( "MARK_OBSTACLES", PnsBridge::RouteMode::MarkObstacles )
@@ -142,5 +148,10 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def( "probe_drag", &PnsBridge::probeDrag,
               py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ) )
         .def( "shove_component_search", &PnsBridge::shoveComponentSearch,
-              py::arg( "x" ), py::arg( "y" ), py::arg( "candidates" ) );
+              py::arg( "x" ), py::arg( "y" ), py::arg( "candidates" ) )
+        .def( "route_diff_pair_and_commit", &PnsBridge::routeDiffPairAndCommit,
+              py::arg( "waypoints" ) )
+        .def( "tune_length", &PnsBridge::tuneLength,
+              py::arg( "x" ), py::arg( "y" ), py::arg( "end_x" ), py::arg( "end_y" ),
+              py::arg( "pns_layer" ), py::arg( "target_length_nm" ) );
 }

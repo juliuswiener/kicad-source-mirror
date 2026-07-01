@@ -310,6 +310,55 @@ static int run( int argc, char** argv )
         std::printf( "LONGHAUL OK (reached)\n" );
     }
 
+    // --- T-DP: differential pair routing. This board has no diff-pair-named
+    // nets, so PNS's FindDpPrimitivePair is expected to fail to find a coupled
+    // net — the point here is proving the code path runs (mode switch + honest
+    // failure), not that this particular board has a pair to route.
+    if( !paths.empty() )
+    {
+        gbridge::RouteChange dp = br.routeDiffPairAndCommit( paths.front().waypoints );
+        std::printf( "routeDiffPairAndCommit: ok=%d placed=%d reached=%d reason='%s'\n",
+                     dp.ok, dp.placed, dp.reached, dp.reason.c_str() );
+        // Mode must be restored to single-route regardless of outcome — prove it
+        // by running an ordinary route right after and confirming it still works.
+        gbridge::RouteResult afterDp = br.routeAndCheck( paths.front().waypoints );
+        std::printf( "post-DP routeAndCheck: ok=%d placed=%d\n", afterDp.ok, afterDp.placed );
+        if( !afterDp.placed )
+        { std::printf( "DP FAIL: router mode not restored after diff-pair attempt\n" ); return 1; }
+        std::printf( "DIFFPAIR OK (mode restored, path ran without crash)\n" );
+    }
+
+    // --- T-TUNE: length-tune an EXISTING routed segment on net 1. -----------
+    {
+        PCB_TRACK* seg = nullptr;
+        for( PCB_TRACK* t : board->Tracks() )
+            if( t->GetNetCode() == 1 && t->Type() == PCB_TRACE_T )
+            { seg = t; break; }
+
+        if( seg )
+        {
+            VECTOR2I s = seg->GetStart(), e = seg->GetEnd();
+            int      tl = br.pnsLayer( seg->GetLayer() );
+            double   curLen = ( e - s ).EuclideanNorm();
+            long long target = (long long) curLen + 500000;   // +0.5mm
+
+            gbridge::PnsBridge::TuneResult tu = br.tuneLength(
+                    s.x, s.y, e.x, e.y, tl, target );
+            std::printf( "tuneLength: ok=%d placed=%d status=%d curLen=%lld target=%lld "
+                         "added=%zu removed=%zu reason='%s'\n",
+                         tu.change.ok, tu.change.placed, tu.status, tu.currentLength,
+                         tu.targetLength, tu.change.addedSegs.size(),
+                         tu.change.removedUuids.size(), tu.change.reason.c_str() );
+            std::printf( "TUNE ran (status %s)\n",
+                         tu.status == 2 ? "TUNED" : tu.status == 0 ? "TOO_SHORT"
+                         : tu.status == 1 ? "TOO_LONG" : "unknown" );
+        }
+        else
+        {
+            std::printf( "TUNE: no net-1 segment found to tune; skipped\n" );
+        }
+    }
+
     // --- T9: make net 1 unrouted (remove its tracks), find the ratsnest target
     //          via the bridge, and route the now-unrouted net. ----------------
     {

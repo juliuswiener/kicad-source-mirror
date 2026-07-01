@@ -216,6 +216,33 @@ public:
     ShoveResult shoveComponentSearch( double x, double y,
                                       const std::vector<std::vector<double>>& candidates );
 
+    // T-DP — differential pair routing. Click ONE point of either net of the
+    // pair (a pad/track); PNS auto-finds its coupled net via
+    // DIFF_PAIR_PLACER::FindDpPrimitivePair (matches KiCad's usual "+/-" /
+    // "_P/_N" netname convention or explicit pairing) and routes BOTH legs
+    // together, offset by DiffPairGap (auto-imported from netclass rules, same
+    // as routeAndCommit's ImportSizes). Waypoints are the shared centreline
+    // path both legs follow. Commits on success (both legs' geometry in
+    // addedSegs/addedVias); same reached/collided honesty as routeAndCommit.
+    RouteChange routeDiffPairAndCommit( const std::vector<gplan::Waypoint>& waypoints );
+
+    // T-TUNE — length tuning of an EXISTING routed trace. (x,y) and (endX,endY)
+    // must both land on already-placed copper of the same net/trace on
+    // pnsLayer (the run being tuned). Replaces the straight run with meanders
+    // reaching targetLengthNm (electrical length, nm). Commits on success:
+    // change.removedUuids = the original straight segment(s), change.addedSegs
+    // = the meander geometry. status/currentLength reflect the actual result
+    // even when ok=false (e.g. status=TOO_SHORT if amplitude/space ran out).
+    struct TuneResult
+    {
+        RouteChange change;
+        int         status        = -1;   // 0=TOO_SHORT, 1=TOO_LONG, 2=TUNED
+        long long   currentLength = 0;
+        long long   targetLength  = 0;
+    };
+    TuneResult tuneLength( double x, double y, double endX, double endY,
+                           int pnsLayer, long long targetLengthNm );
+
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }
 

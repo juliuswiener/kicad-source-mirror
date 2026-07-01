@@ -36,6 +36,8 @@
 #include <router/pns_placement_algo.h>
 #include <router/pns_drag_algo.h>
 #include <router/pns_layerset.h>
+#include <router/pns_meander_placer_base.h>
+#include <router/pns_meander.h>
 
 using namespace gbridge;
 
@@ -939,4 +941,235 @@ ShoveResult PnsBridge::shoveComponentSearch( double x, double y,
     best.committed  = best.change.ok;
     best.x = bx; best.y = by; best.cost = bestCost;
     return best;
+}
+
+// ---------------------------------------------------------------------------
+// T-DP — differential pair routing. Same commit machinery as routeAndCommit;
+// only the placer differs (DIFF_PAIR_PLACER, selected via ROUTER::SetMode).
+// DIFF_PAIR_PLACER::Traces() already returns BOTH legs (P+N lines), so the
+// existing HeadlessIface Add/Update/RemoveItem capture needs no changes.
+// ---------------------------------------------------------------------------
+RouteChange PnsBridge::routeDiffPairAndCommit( const std::vector<gplan::Waypoint>& wps )
+{
+    RouteChange rc;
+    if( wps.size() < 2 )
+        return rc;
+
+    auto toV = []( const gplan::Waypoint& w )
+    { return VECTOR2I( (int) std::lround( w.p.x ), (int) std::lround( w.p.y ) ); };
+
+    VECTOR2I startP = toV( wps.front() );
+    int      layer  = wps.front().layer;
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( startP );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( startP, 100000 );
+    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+
+    PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
+    m_iface->SetStartLayerFromPNS( layer );
+    m_iface->ImportSizes( sizes, startItem, startItem ? startItem->Net() : nullptr,
+                          VECTOR2D( startP.x, startP.y ) );
+    m_router->UpdateSizes( sizes );
+    if( startItem )
+        rc.netcode = m_iface->GetNetCode( startItem->Net() );
+
+    // Placer selection (diff pair) is a separate axis from the shove/walkaround
+    // behavior mode (Settings().SetMode) — set both, restore the placer mode on
+    // every exit path so subsequent single-net calls aren't left in DP mode.
+    m_router->Settings().SetMode( toPnsMode( m_mode ) );
+    m_router->SetMode( PNS::PNS_MODE_ROUTE_DIFF_PAIR );
+    auto restoreMode = [this]() { m_router->SetMode( PNS::PNS_MODE_ROUTE_SINGLE ); };
+
+    if( !m_router->StartRouting( startP, startItem, layer ) )
+    {
+        rc.reason = m_router->FailureReason().ToStdString();
+        restoreMode();
+        return rc;
+    }
+
+    for( size_t i = 1; i < wps.size(); ++i )
+    {
+        VECTOR2I p = toV( wps[i] );
+        if( wps[i].layer != wps[i - 1].layer )
+        {
+            m_router->Move( p, nullptr );
+            if( !m_router->IsPlacingVia() ) m_router->ToggleViaPlacement();
+            m_router->SwitchLayer( wps[i].layer );
+            m_router->FixRoute( p, nullptr, false, false );
+            if( m_router->IsPlacingVia() ) m_router->ToggleViaPlacement();
+            continue;
+        }
+        m_router->Move( p, nullptr );
+    }
+
+    m_router->FixRoute( toV( wps.back() ), nullptr, true, false );
+
+    VECTOR2I tgt  = toV( wps.back() );
+    int      tgtL = wps.back().layer;
+
+    PNS::PLACEMENT_ALGO* placer = m_router->Placer();
+    PNS::NODE*    node   = placer ? placer->CurrentNode( true ) : nullptr;
+    PNS::ITEM_SET traces = placer ? placer->Traces() : PNS::ITEM_SET();  // both P+N legs
+    rc.placed = node && traces.Size() > 0;
+
+    VECTOR2I farthest = startP;
+    if( rc.placed )
+    {
+        bool anyReached = false;
+        for( PNS::ITEM* it : traces.Items() )
+        {
+            if( !it->OfKind( PNS::ITEM::LINE_T ) )
+                continue;
+            PNS::LINE* l = static_cast<PNS::LINE*>( it );
+            if( !l->PointCount() )
+                continue;
+            VECTOR2I end = l->CLine().CPoint( -1 );
+            if( l->Layer() == tgtL && ( end - tgt ).EuclideanNorm() < 50000 )
+                anyReached = true;
+            if( ( end - tgt ).EuclideanNorm() < ( farthest - tgt ).EuclideanNorm() )
+                farthest = end;
+        }
+        // Both legs must reach for a diff pair to be considered complete.
+        rc.reached = anyReached;
+        for( PNS::ITEM* it : traces.Items() )
+        {
+            PNS::NODE::OBSTACLES obs;
+            node->QueryColliding( it, obs );
+            if( !obs.empty() ) { rc.collided = true; break; }
+        }
+    }
+    rc.blocking = P( farthest );
+    rc.reason   = m_router->FailureReason().ToStdString();
+
+    if( !rc.reached || rc.collided )
+    {
+        rc.ok = false;
+        m_router->StopRouting();
+        restoreMode();
+        return rc;
+    }
+
+    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
+    hi->clearChanges();
+    m_router->CommitRouting();
+
+    RouteChange& ch = hi->changes;
+    rc.addedSegs   = ch.addedSegs;   rc.addedVias = ch.addedVias;
+    rc.modSegUuids = ch.modSegUuids; rc.modSegs   = ch.modSegs;
+    rc.modViaUuids = ch.modViaUuids; rc.modVias   = ch.modVias;
+    rc.removedUuids = ch.removedUuids;
+    rc.vias   = static_cast<int>( ch.addedVias.size() );
+    rc.ok     = true;
+    restoreMode();
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
+// T-TUNE — length tuning of an existing routed trace (MEANDER_PLACER). Ground
+// truth for the Start/UpdateSettings/Move/FixRoute sequence: verified against
+// pcbnew/generators/pcb_tuning_pattern.cpp (the real UI's tuning driver).
+// ---------------------------------------------------------------------------
+PnsBridge::TuneResult PnsBridge::tuneLength( double x, double y, double endX, double endY,
+                                             int pnsLayer, long long targetLengthNm )
+{
+    TuneResult tr;
+
+    VECTOR2I startP( (int) std::lround( x ), (int) std::lround( y ) );
+    VECTOR2I endP( (int) std::lround( endX ), (int) std::lround( endY ) );
+
+    // The item being tuned must already exist at the start point — tuning
+    // reshapes copper, it does not create a route from nothing.
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( startP );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( startP, 100000 );
+    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+    if( !startItem )
+    {
+        tr.change.reason = "no existing track at tuning start point";
+        return tr;
+    }
+    tr.change.netcode = m_iface->GetNetCode( startItem->Net() );
+
+    m_iface->SetStartLayerFromPNS( pnsLayer );
+    m_router->Settings().SetMode( toPnsMode( m_mode ) );
+    m_router->SetMode( PNS::PNS_MODE_TUNE_SINGLE );
+    auto restoreMode = [this]() { m_router->SetMode( PNS::PNS_MODE_ROUTE_SINGLE ); };
+
+    if( !m_router->StartRouting( startP, startItem, pnsLayer ) )
+    {
+        tr.change.reason = m_router->FailureReason().ToStdString();
+        restoreMode();
+        return tr;
+    }
+
+    auto* placer = dynamic_cast<PNS::MEANDER_PLACER_BASE*>( m_router->Placer() );
+    if( !placer )
+    {
+        tr.change.reason = "router did not create a MEANDER_PLACER (mode mismatch)";
+        m_router->StopRouting();
+        restoreMode();
+        return tr;
+    }
+
+    PNS::MEANDER_SETTINGS settings = placer->MeanderSettings();   // keep defaults
+    settings.SetTargetLength( targetLengthNm );
+    // origPathDelay()/lineDelay() run unconditionally inside doMove() (even in
+    // length-only mode) and dereference m_netClass -> crash if left null
+    // (the default from MEANDER_SETTINGS's ctor). Populate it from the real net.
+    if( startItem->Net() )
+    {
+        NETINFO_ITEM* ni = static_cast<NETINFO_ITEM*>( startItem->Net() );
+        settings.m_netClass = ni->GetNetClass();
+    }
+    placer->UpdateSettings( settings );
+
+    m_router->Move( endP, nullptr );
+
+    tr.status        = static_cast<int>( placer->TuningStatus() );
+    tr.currentLength = placer->TuningLengthResult();
+    tr.targetLength  = targetLengthNm;
+
+    m_router->FixRoute( endP, nullptr, true, false );
+
+    PNS::PLACEMENT_ALGO* palgo = m_router->Placer();
+    PNS::NODE*    node   = palgo ? palgo->CurrentNode( true ) : nullptr;
+    PNS::ITEM_SET tunedTraces = palgo ? palgo->Traces() : PNS::ITEM_SET();
+    bool placed = node && tunedTraces.Size() > 0;
+
+    // No manual QueryColliding here (unlike routeAndCommit): the meander
+    // placer keeps its own geometry DRC-clear internally (that's what
+    // TuningStatus() reflects) and never shoves foreign copper. The real UI
+    // driver (pcb_tuning_pattern.cpp) doesn't run a collision query either —
+    // doing so here hit corrupt/degenerate meander geometry and crashed deep
+    // in the R-tree (KIRTREE::COW_RTREE::searchImpl). Trust TUNED status.
+    tr.change.placed   = placed;
+    tr.change.collided = false;
+    // FailureReason() is sticky from the router's PREVIOUS attempt (it isn't
+    // reset by StartRouting) — only meaningful when nothing placed here.
+    tr.change.reason   = placed ? std::string() : m_router->FailureReason().ToStdString();
+
+    // Commit only a real TUNED result — a TOO_SHORT/TOO_LONG attempt still
+    // reports its status/currentLength honestly but changes nothing on the world.
+    if( !placed || tr.status != static_cast<int>( PNS::MEANDER_PLACER_BASE::TUNED ) )
+    {
+        tr.change.ok = false;
+        m_router->StopRouting();
+        restoreMode();
+        return tr;
+    }
+
+    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
+    hi->clearChanges();
+    m_router->CommitRouting();
+
+    RouteChange& ch = hi->changes;
+    tr.change.addedSegs    = ch.addedSegs;    tr.change.addedVias  = ch.addedVias;
+    tr.change.modSegUuids  = ch.modSegUuids;  tr.change.modSegs    = ch.modSegs;
+    tr.change.modViaUuids  = ch.modViaUuids;  tr.change.modVias    = ch.modVias;
+    tr.change.removedUuids = ch.removedUuids;
+    tr.change.vias = static_cast<int>( ch.addedVias.size() );
+    tr.change.ok   = true;
+    restoreMode();
+    return tr;
 }
