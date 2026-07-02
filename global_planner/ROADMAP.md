@@ -75,10 +75,21 @@ between the two bounding fixed obstacles (geometric corridor width / max-flow on
 the channel) [Cheng05]. Sharpens congestion ranking; still a heuristic (PNS is
 ground truth).
 
-### 2.5 Region culling + per-plan caching ★★ (M) — `planner_core.cpp:445`
-Add `plan(start,target,bbox)` / `setRegion(bbox)`; cache node/edge adjacency and
-rebuild only when obstacles/bumps change (the 100-target loop currently rebuilds
-the whole graph each call). Pairs with 2.2.
+### 2.5 Region culling + per-plan caching ★★ (M) — `planner_core.cpp` (T-CACHE/T-REGION) — **DONE**
+`plan()` now splits the graph into a cached corner-only part (inflated-hull
+nodes + edges, independent of start/target) and a tiny per-plan start/target
+overlay (appended nodes, connected exhaustively — the old src/dst exemption,
+generalised). The cache is rebuilt only when its inputs change
+(`bumpCongestion`/`clearCongestion`, region change); obstacles are
+ctor-immutable, so a multi-target loop over one obstacle set costs ONE build
+(`graphBuildCount()` exposes this; ctest asserts 3 plans = 1 build and that
+cache-hit results are byte-identical to a cold, uncached instance).
+`setRegion(bbox)` / `plan(start,target,bbox)` cull corner nodes to the bbox;
+re-setting the same region keeps the cache warm. Validation also surfaced a
+latent heap-layout-dependent use-after-free in `PnsBridge::load()` reload
+(old board's `BOARD_DESIGN_SETTINGS` outliving its project's
+`JSON_SETTINGS` parent) — fixed via `ClearProject()` before swapping
+`m_settings` (`pns_bridge_load.cpp`).
 
 ### 2.6 A* improvements ★ (S–M) — `planner_core.cpp:379`
 Tie-breaking (secondary key) to cut equal-cost expansion; optional **bidirectional
@@ -178,7 +189,7 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 1. **Tier 0** (all) — **done**.
 2. **4.11 real hulls + 4.9 ratsnest endpoints + 4.10 board outline** — **done**.
 3. **2.1 Yen** (done) **+ 2.2 spatial index** (done — T-GRID + T-NEIGHBOR)
-   **+ 2.5 region/caching** (open) — planner quality + scale.
+   **+ 2.5 region/caching** (done — T-CACHE + T-REGION) — planner quality + scale.
 4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
 5. **4.6 optimizer + 4.8 mode strategy** — open; output cleanliness, cheap.
 6. **4.1 diff pairs + 4.2 length tuning** — **done**.
@@ -187,7 +198,7 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
-Genuinely open as of this writing: 2.4, 2.5, 2.6, 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
+Genuinely open as of this writing: 2.4, 2.6, 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
 4.7, 4.8, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---

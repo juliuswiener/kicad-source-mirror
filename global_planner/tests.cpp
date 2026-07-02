@@ -82,6 +82,29 @@ static bool pathClears( const Path& p, const std::vector<Obstacle>& obs, double 
     return true;
 }
 
+// Exact path-set equality (cost + waypoints + layers), for the 2.5 cache test.
+static bool samePaths( const std::vector<Path>& a, const std::vector<Path>& b )
+{
+    if( a.size() != b.size() )
+        return false;
+    for( size_t i = 0; i < a.size(); ++i )
+    {
+        if( std::fabs( a[i].cost - b[i].cost ) > 1e-9 )
+            return false;
+        if( a[i].waypoints.size() != b[i].waypoints.size() )
+            return false;
+        for( size_t j = 0; j < a[i].waypoints.size(); ++j )
+        {
+            if( a[i].waypoints[j].layer != b[i].waypoints[j].layer )
+                return false;
+            if( std::fabs( a[i].waypoints[j].p.x - b[i].waypoints[j].p.x ) > 1e-9
+                || std::fabs( a[i].waypoints[j].p.y - b[i].waypoints[j].p.y ) > 1e-9 )
+                return false;
+        }
+    }
+    return true;
+}
+
 int main()
 {
     PlannerParams base;
@@ -259,6 +282,53 @@ int main()
         for( const Path& p : paths )
             if( p.waypoints.size() == 2 ) straight = true;   // direct line = crosses wall
         CHECK( !straight, "T6: thin wall blocks the direct edge (exact, no sampling miss)" );
+    }
+
+    // 2.5 — graph cache + region culling: repeated plan() reuses the cached
+    // corner graph (counter proves it), cached results are identical to a cold
+    // (uncached) instance, and bumps/region changes invalidate correctly.
+    {
+        std::vector<Obstacle> obs = {
+            { box( 5,  1.6, 3, 2 ), true, 0 },
+            { box( 5, -1.6, 3, 2 ), true, 0 },
+            { box( 30, 0, 3, 3 ), true, 0 },      // far obstacle (outside region below)
+        };
+        Planner pl( obs, base );
+        CHECK( pl.graphBuildCount() == 0, "2.5: no graph built before first plan()" );
+
+        auto a = pl.plan( { 0, 0 }, { 10, 0 } );
+        CHECK( pl.graphBuildCount() == 1, "2.5: first plan() builds the graph" );
+
+        auto b = pl.plan( { 0, 0 }, { 10, 0 } );
+        auto c = pl.plan( { 0, 3 }, { 10, 3 } );  // different query, same obstacles
+        CHECK( pl.graphBuildCount() == 1, "2.5: repeated plan() reuses the cached graph" );
+        CHECK( !c.empty(), "2.5: cached graph serves a different start/target" );
+        CHECK( samePaths( a, b ), "2.5: cache-hit result identical to cache-miss result" );
+
+        Planner fresh( obs, base );               // cold instance = uncached path
+        CHECK( samePaths( b, fresh.plan( { 0, 0 }, { 10, 0 } ) ),
+               "2.5: cached results match an uncached instance" );
+
+        pl.bumpCongestion( { 5, 0 }, 1.5, 5.0 );
+        auto d = pl.plan( { 0, 0 }, { 10, 0 } );
+        CHECK( pl.graphBuildCount() == 2, "2.5: bumpCongestion invalidates the cache" );
+        CHECK( !d.empty() && d.front().cost > a.front().cost,
+               "2.5: post-bump rebuild sees the new congestion" );
+        pl.clearCongestion();
+        auto e = pl.plan( { 0, 0 }, { 10, 0 } );
+        CHECK( pl.graphBuildCount() == 3, "2.5: clearCongestion invalidates the cache" );
+        CHECK( samePaths( a, e ), "2.5: after clearCongestion results are back to baseline" );
+
+        BBox reg{ -2, -6, 14, 6 };                // excludes the far obstacle at x=30
+        auto r1 = pl.plan( { 0, 0 }, { 10, 0 }, reg );
+        CHECK( pl.graphBuildCount() == 4, "2.5: new region rebuilds the graph once" );
+        auto r2 = pl.plan( { 0, 0 }, { 10, 0 }, reg );
+        CHECK( pl.graphBuildCount() == 4, "2.5: same region reuses the cached graph" );
+        CHECK( !r1.empty() && samePaths( r1, r2 ), "2.5: region plan cached == uncached" );
+
+        pl.clearRegion();
+        (void) pl.plan( { 0, 0 }, { 10, 0 } );
+        CHECK( pl.graphBuildCount() == 5, "2.5: clearRegion invalidates the cache" );
     }
 
     std::printf( "\n%d passed, %d failed\n", g_pass, g_fail );

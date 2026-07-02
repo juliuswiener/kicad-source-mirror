@@ -31,6 +31,16 @@ bool PnsBridge::load( const std::string& pcbPath, std::string* aErr )
     const wxString pcb = fnAbs.GetFullPath();
     auto fail = [aErr]( const std::string& msg ) { if( aErr ) *aErr = msg; return false; };
 
+    // Reload teardown order: the old board's BOARD_DESIGN_SETTINGS is a
+    // NESTED_SETTINGS of the OLD project's file. Replacing m_settings (next
+    // line) destroys that project, but the old board is only destroyed later
+    // (m_boardHolder re-assignment) — its ~BOARD_DESIGN_SETTINGS would then
+    // call ReleaseNestedSettings() on the freed parent, an intermittent
+    // (heap-layout dependent) use-after-free crash. Detach while the old
+    // project is still alive.
+    if( m_boardHolder )
+        m_boardHolder->ClearProject();
+
     // Project (.kicad_pro): netclasses + design rules, by the usual stem.
     m_settings = std::make_unique<SETTINGS_MANAGER>();
     wxFileName fnPro( pcb );

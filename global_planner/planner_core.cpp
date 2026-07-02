@@ -368,58 +368,84 @@ void Planner::bumpCongestion( Point where, double radius, double factor )
 {
     std::lock_guard<std::mutex> lk( m_mutex );   // T1
     m_bumps.push_back( { where, radius, factor } );
+    m_graphDirty = true;                         // T-CACHE: bumps feed edgeWeight
 }
 
 void Planner::clearCongestion()
 {
     std::lock_guard<std::mutex> lk( m_mutex );   // T1
+    if( !m_bumps.empty() )
+        m_graphDirty = true;
     m_bumps.clear();
 }
 
-void Planner::buildNodes( Point start, int sL, Point target, int tL )
+void Planner::setRegion( const BBox& region )
+{
+    std::lock_guard<std::mutex> lk( m_mutex );
+    if( m_hasRegion && region.x0 == m_region.x0 && region.y0 == m_region.y0
+        && region.x1 == m_region.x1 && region.y1 == m_region.y1 )
+        return;                                  // unchanged -> keep cache warm
+    m_hasRegion = true;
+    m_region = region;
+    m_graphDirty = true;
+}
+
+void Planner::clearRegion()
+{
+    std::lock_guard<std::mutex> lk( m_mutex );
+    if( !m_hasRegion )
+        return;
+    m_hasRegion = false;
+    m_graphDirty = true;
+}
+
+int Planner::graphBuildCount() const
+{
+    std::lock_guard<std::mutex> lk( m_mutex );
+    return m_graphBuilds;
+}
+
+// point-in-polygon implies point-in-AABB, so an unpadded point query is
+// exact — no need to grow the search box.
+bool Planner::insideAnyBlock( Point p, int sp ) const
+{
+    const LayerData& ld = m_layerData[sp];
+    m_queryBuf.clear();
+    ld.fixedGrid.queryInto( p.x, p.y, p.x, p.y, m_queryBuf );
+    for( int i : m_queryBuf )
+        if( pointInPolygon( p, ld.fixedBlock[i] ) )
+            return true;
+    return false;
+}
+
+void Planner::buildCornerNodes()
 {
     m_nodes.clear();
 
-    // Start and target are added first and are NEVER filtered: they legitimately
-    // sit on/inside their own pad hulls.
-    m_srcIdx = static_cast<int>( m_nodes.size() );
-    m_nodes.push_back( { start, sL } );
-    m_dstIdx = static_cast<int>( m_nodes.size() );
-    m_nodes.push_back( { target, tL } );
-
-    // Candidate (x,y) columns: start, target, and every fixed inflated corner
-    // from every layer. Each column is replicated on every routed layer (so a via
-    // can land there) — but only where the position is actually clear of fixed
-    // copper on that layer. A corner that falls inside an overlapping obstacle is
-    // not a valid placement and must be dropped (else it would open a hole).
-    std::vector<Point> xy = { start, target };
+    // Candidate (x,y) columns: every fixed inflated corner from every layer
+    // (region-filtered, T-REGION). Each column is replicated on every routed
+    // layer (so a via can land there) — but only where the position is actually
+    // clear of fixed copper on that layer. A corner that falls inside an
+    // overlapping obstacle is not a valid placement and must be dropped (else
+    // it would open a hole). Start/target are NOT here: they are appended as a
+    // small per-plan overlay so this corner graph is cacheable (T-CACHE).
+    std::vector<Point> xy;
     for( const LayerData& ld : m_layerData )
         for( const Polygon& hull : ld.fixedInflated )
             for( const Point& v : hull )
+            {
+                if( m_hasRegion
+                    && ( v.x < m_region.x0 || v.x > m_region.x1
+                         || v.y < m_region.y0 || v.y > m_region.y1 ) )
+                    continue;
                 xy.push_back( v );
-
-    // point-in-polygon implies point-in-AABB, so an unpadded point query is
-    // exact — no need to grow the search box.
-    auto insideAnyBlock = [&]( Point p, int sp )
-    {
-        const LayerData& ld = m_layerData[sp];
-        m_queryBuf.clear();
-        ld.fixedGrid.queryInto( p.x, p.y, p.x, p.y, m_queryBuf );
-        for( int i : m_queryBuf )
-            if( pointInPolygon( p, ld.fixedBlock[i] ) )
-                return true;
-        return false;
-    };
+            }
 
     for( int layer : m_params.layers )
     {
         int sp = stackPos( layer );
         for( const Point& p : xy )
         {
-            // Don't duplicate the start/target nodes already added.
-            if( ( layer == sL && dist( p, start ) < 1e-9 )
-                || ( layer == tL && dist( p, target ) < 1e-9 ) )
-                continue;
             if( sp >= 0 && insideAnyBlock( p, sp ) )
                 continue;
             m_nodes.push_back( { p, layer } );
@@ -538,13 +564,12 @@ double Planner::edgeWeight( Point a, Point b, int layer ) const
     return base + congestion + tightness;
 }
 
-void Planner::buildEdges()
+void Planner::connectPair( int i, int j )
 {
-    int n = static_cast<int>( m_nodes.size() );
-    m_adj.assign( n, {} );
-    m_edgeList.clear();
+    const Node& A = m_nodes[i];
+    const Node& B = m_nodes[j];
 
-    auto addEdge = [&]( int i, int j, double w )
+    auto addEdge = [&]( double w )
     {
         int id = static_cast<int>( m_edgeList.size() );
         m_edgeList.push_back( { i, j, w } );
@@ -552,39 +577,40 @@ void Planner::buildEdges()
         m_adj[j].push_back( { i, id } );
     };
 
-    auto testPair = [&]( int i, int j )
+    if( A.layer == B.layer )
     {
-        const Node& A = m_nodes[i];
-        const Node& B = m_nodes[j];
+        // Intra-layer visibility edge.
+        if( dist( A.p, B.p ) < 1e-9 )
+            return;
+        if( edgeBlocked( A.p, B.p, A.layer ) )
+            return;
+        addEdge( edgeWeight( A.p, B.p, A.layer ) );
+    }
+    else if( dist( A.p, B.p ) < 1e-9 )
+    {
+        // Same (x,y), different layer -> candidate via, only between
+        // layers adjacent in the stack, clear on both.
+        if( std::abs( stackPos( A.layer ) - stackPos( B.layer ) ) != 1 )
+            return;
+        if( viaSiteClear( A.p, A.layer ) && viaSiteClear( B.p, B.layer ) )
+            addEdge( m_params.viaCost );
+    }
+}
 
-        if( A.layer == B.layer )
-        {
-            // Intra-layer visibility edge.
-            if( dist( A.p, B.p ) < 1e-9 )
-                return;
-            if( edgeBlocked( A.p, B.p, A.layer ) )
-                return;
-            addEdge( i, j, edgeWeight( A.p, B.p, A.layer ) );
-        }
-        else if( dist( A.p, B.p ) < 1e-9 )
-        {
-            // Same (x,y), different layer -> candidate via, only between
-            // layers adjacent in the stack, clear on both.
-            if( std::abs( stackPos( A.layer ) - stackPos( B.layer ) ) != 1 )
-                return;
-            if( viaSiteClear( A.p, A.layer ) && viaSiteClear( B.p, B.layer ) )
-                addEdge( i, j, m_params.viaCost );
-        }
-    };
+void Planner::buildCornerEdges()
+{
+    int n = static_cast<int>( m_nodes.size() );
+    m_adj.assign( n, {} );
+    m_edgeList.clear();
 
     // T-NEIGHBOR: buildEdges used to test EVERY node pair (O(n^2) candidates) —
     // T-GRID (above) only sped up the per-candidate obstacle scan, not this
     // outer enumeration. Bound candidate generation to spatially-nearby pairs
     // instead: each node queries an expanding ring (via a grid over node XY
     // positions) until it has enough neighbours, or the ring covers the whole
-    // board. start/target are exempt — tested against EVERY other node — so a
-    // free direct sightline is never missed regardless of distance (only 2
-    // nodes, O(n) extra, negligible). A pair found from EITHER side's query is
+    // board. Start/target are not in this graph at all (T-CACHE overlay in
+    // plan() connects them exhaustively — a free direct sightline is never
+    // missed regardless of distance). A pair found from EITHER side's query is
     // tested at most once (seenPairs dedup).
     std::vector<AABB> nodeBoxes( n );
     for( int i = 0; i < n; ++i )
@@ -611,9 +637,6 @@ void Planner::buildEdges()
     std::vector<int> nbuf;
     for( int i = 0; i < n; ++i )
     {
-        if( i == m_srcIdx || i == m_dstIdx )
-            continue;   // handled exhaustively below
-
         double r = std::max( nodeGrid.cell, 1.0 ) * 2.0;
         for( int ring = 0; ring < 24; ++ring )
         {
@@ -631,20 +654,7 @@ void Planner::buildEdges()
             int64_t key = pairKey( i, j );
             if( !seenPairs.insert( key ).second )
                 continue;                    // already tested from the other side
-            testPair( std::min( i, j ), std::max( i, j ) );
-        }
-    }
-
-    for( int special : { m_srcIdx, m_dstIdx } )
-    {
-        for( int j = 0; j < n; ++j )
-        {
-            if( j == special )
-                continue;
-            int64_t key = pairKey( special, j );
-            if( !seenPairs.insert( key ).second )
-                continue;
-            testPair( std::min( special, j ), std::max( special, j ) );
+            connectPair( std::min( i, j ), std::max( i, j ) );
         }
     }
 }
@@ -717,8 +727,59 @@ std::vector<Waypoint> simplify( const std::vector<Waypoint>& wps )
 std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
 {
     std::lock_guard<std::mutex> lk( m_mutex );   // T1: guards graph rebuild + m_bumps
-    buildNodes( start, sL, target, tL );
-    buildEdges();
+
+    // T-CACHE (2.5): the corner-only graph is independent of start/target.
+    // Rebuild it only when bumps/region changed since the last plan(); otherwise
+    // reuse the cached copy and just overlay this call's start/target nodes.
+    if( m_graphDirty )
+    {
+        buildCornerNodes();
+        buildCornerEdges();
+        m_cornerNodes    = m_nodes;
+        m_cornerAdj      = m_adj;
+        m_cornerEdgeList = m_edgeList;
+        m_graphDirty = false;
+        ++m_graphBuilds;
+    }
+    else
+    {
+        m_nodes    = m_cornerNodes;
+        m_adj      = m_cornerAdj;
+        m_edgeList = m_cornerEdgeList;
+    }
+
+    // Per-plan overlay: start + target (NEVER filtered — they legitimately sit
+    // on/inside their own pad hulls), plus their (x,y) columns replicated on
+    // the other routed layers (so a via can land there) where clear of fixed
+    // copper.
+    const int cornerCount = static_cast<int>( m_nodes.size() );
+    m_srcIdx = cornerCount;
+    m_nodes.push_back( { start, sL } );
+    m_dstIdx = cornerCount + 1;
+    m_nodes.push_back( { target, tL } );
+
+    for( int layer : m_params.layers )
+    {
+        int sp = stackPos( layer );
+        for( const Point& p : { start, target } )
+        {
+            // Don't duplicate the start/target nodes already added.
+            if( ( layer == sL && dist( p, start ) < 1e-9 )
+                || ( layer == tL && dist( p, target ) < 1e-9 ) )
+                continue;
+            if( sp >= 0 && insideAnyBlock( p, sp ) )
+                continue;
+            m_nodes.push_back( { p, layer } );
+        }
+    }
+
+    // Connect every overlay node against ALL nodes (exhaustive — at most
+    // 2*layers overlay nodes, O(layers*n) pair tests; a free direct sightline
+    // from start/target is never missed regardless of distance).
+    m_adj.resize( m_nodes.size() );
+    for( int i = cornerCount; i < (int) m_nodes.size(); ++i )
+        for( int j = 0; j < i; ++j )
+            connectPair( j, i );
 
     std::vector<Path> result;
     if( m_srcIdx < 0 || m_dstIdx < 0 )
@@ -839,6 +900,19 @@ std::vector<Path> Planner::plan( Point start, Point target )
 {
     int l = m_params.layers.front();
     return plan( start, l, target, l );
+}
+
+std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL,
+                                 const BBox& region )
+{
+    setRegion( region );   // no-op (cache stays warm) if unchanged
+    return plan( start, sL, target, tL );
+}
+
+std::vector<Path> Planner::plan( Point start, Point target, const BBox& region )
+{
+    int l = m_params.layers.front();
+    return plan( start, l, target, l, region );
 }
 
 } // namespace gplan

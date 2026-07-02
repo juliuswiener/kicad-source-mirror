@@ -78,6 +78,12 @@ struct CongestionBump
     double factor = 1.0;
 };
 
+// Axis-aligned region of interest for graph culling (T-REGION, roadmap 2.5).
+struct BBox
+{
+    double x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0;
+};
+
 class Planner
 {
 public:
@@ -91,9 +97,26 @@ public:
     // Convenience for single-layer use (start/target on params.layers[0]).
     std::vector<Path> plan( Point start, Point target );
 
+    // T-REGION (2.5): same as above, but restrict the graph to corner nodes
+    // inside `region` first (equivalent to setRegion(region) + plan(...)).
+    std::vector<Path> plan( Point start, int startLayer, Point target, int targetLayer,
+                            const BBox& region );
+    std::vector<Path> plan( Point start, Point target, const BBox& region );
+
+    // T-REGION (2.5): only obstacle corners inside `region` become graph nodes
+    // (start/target are always kept). Setting a DIFFERENT region invalidates the
+    // cached graph; re-setting the same region is a no-op (cache stays warm).
+    void setRegion( const BBox& region );
+    void clearRegion();
+
     // PathFinder feedback after a router failure near `where` (any layer).
     void bumpCongestion( Point where, double radius, double factor );
     void clearCongestion();
+
+    // T-CACHE (2.5): number of full corner-graph rebuilds so far. plan() only
+    // rebuilds when bumps/region changed since the last call — a loop of plan()
+    // calls over one obstacle set costs ONE build (observable via this counter).
+    int graphBuildCount() const;
 
 private:
     struct Node { Point p; int layer; };
@@ -101,8 +124,10 @@ private:
     struct EdgeRef { int a; int b; double weight; };
 
     void  buildLayers();                               // group obstacles per layer
-    void  buildNodes( Point start, int sL, Point target, int tL );
-    void  buildEdges();
+    void  buildCornerNodes();                          // corner-only nodes -> m_nodes
+    void  buildCornerEdges();                          // edges among m_nodes (T-NEIGHBOR)
+    void  connectPair( int i, int j );                 // test/add one candidate edge
+    bool  insideAnyBlock( Point p, int sp ) const;
     std::vector<int> aStar( int src, int dst, const std::vector<double>& mul ) const;
 
     double edgeWeight( Point a, Point b, int layer ) const;
@@ -169,12 +194,26 @@ private:
     };
     std::vector<LayerData> m_layerData;      // indexed by stackPos()
 
-    // Graph state, rebuilt per plan().
+    // Graph state used by aStar/plan. Per plan() call this is the cached
+    // corner graph plus a small start/target overlay appended at the end.
     std::vector<Node>              m_nodes;
     std::vector<std::vector<Edge>> m_adj;
     std::vector<EdgeRef>           m_edgeList;
     int                            m_srcIdx = 0;
     int                            m_dstIdx = 1;
+
+    // T-CACHE (2.5) — corner-only graph (nodes = inflated hull corners on every
+    // routed layer, edges among them). Independent of start/target, so it is
+    // built once and reused across plan() calls; invalidated only when the edge
+    // weights' inputs change (bumpCongestion/clearCongestion) or the region
+    // filter changes (setRegion/clearRegion). Obstacles are ctor-immutable.
+    bool                           m_graphDirty = true;
+    int                            m_graphBuilds = 0;
+    bool                           m_hasRegion = false;
+    BBox                           m_region;
+    std::vector<Node>              m_cornerNodes;
+    std::vector<std::vector<Edge>> m_cornerAdj;
+    std::vector<EdgeRef>           m_cornerEdgeList;
 };
 
 } // namespace gplan
