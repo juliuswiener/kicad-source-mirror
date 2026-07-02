@@ -38,6 +38,7 @@
 #include <router/pns_layerset.h>
 #include <router/pns_meander_placer_base.h>
 #include <router/pns_meander.h>
+#include <router/pns_optimizer.h>
 
 using namespace gbridge;
 
@@ -1178,6 +1179,86 @@ PnsBridge::TuneResult PnsBridge::tuneLength( double x, double y, double endX, do
     tr.change.ok   = true;
     restoreMode();
     return tr;
+}
+
+// ---------------------------------------------------------------------------
+// §4.6 — post-route optimizer pass. Assembles the joint-to-joint LINE that owns
+// the segment/arc under (x,y,pnsLayer) from the committed world, runs
+// PNS::OPTIMIZER (MERGE_SEGMENTS + SMART_PADS — the same effects the
+// interactive router applies post-shove, see SHOVE::runOptimizer /
+// LINE_PLACER::optimizeTailHeadTransition), and commits an improvement through
+// the same parent-matched change stream as routeAndCommit. NODE::Branch +
+// Replace + ROUTER::CommitRouting(NODE*) is the standard world-edit pattern.
+// ---------------------------------------------------------------------------
+OptimizeResult PnsBridge::optimizeRoute( double x, double y, int pnsLayer )
+{
+    OptimizeResult res;
+    VECTOR2I p( (int) std::lround( x ), (int) std::lround( y ) );
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( p );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( p, 100000 );
+
+    PNS::ITEM* seed = nullptr;
+    for( PNS::ITEM* it : hits.Items() )
+        if( it->OfKind( PNS::ITEM::SEGMENT_T | PNS::ITEM::ARC_T )
+            && it->Layers().Start() <= pnsLayer && pnsLayer <= it->Layers().End() )
+        { seed = it; break; }
+    if( !seed )
+    { res.reason = "no track at optimize point"; return res; }
+
+    res.found = true;
+    res.change.netcode = m_iface->GetNetCode( seed->Net() );
+
+    PNS::NODE* world  = m_router->GetWorld();
+    PNS::NODE* branch = world->Branch();
+
+    PNS::LINE line = branch->AssembleLine( static_cast<PNS::LINKED_ITEM*>( seed ) );
+    res.lengthBefore  = (double) line.CLine().Length();
+    res.cornersBefore = line.CLine().PointCount();
+    res.lengthAfter   = res.lengthBefore;
+    res.cornersAfter  = res.cornersBefore;
+
+    PNS::OPTIMIZER opt( branch );
+    opt.SetEffortLevel( PNS::OPTIMIZER::MERGE_SEGMENTS | PNS::OPTIMIZER::SMART_PADS );
+    opt.SetCollisionMask( PNS::ITEM::ANY_T );
+
+    PNS::LINE optimized;   // Optimize() fills it link-free (safe for NODE::Add)
+    if( !opt.Optimize( &line, &optimized ) )
+    {
+        delete branch;     // ~NODE unlinks itself from the parent's child list
+        res.ok = true;
+        res.reason = "no improvement found";
+        return res;
+    }
+
+    res.lengthAfter  = (double) optimized.CLine().Length();
+    res.cornersAfter = optimized.CLine().PointCount();
+
+    branch->Replace( line, optimized );
+
+    // OPTIMIZER only accepts collision-free replacements, but verify against
+    // the branch before committing (same honesty as routeAndCommit).
+    if( branch->CheckColliding( &optimized ) )
+    {
+        delete branch;
+        res.reason = "optimized line collides (not committed)";
+        return res;
+    }
+
+    int netcode = res.change.netcode;
+    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
+    hi->clearChanges();
+    m_router->CommitRouting( branch );   // emits change stream; world reclaims branch
+
+    res.change = hi->changes;
+    res.change.netcode = netcode;
+    res.change.ok      = true;
+    res.change.placed  = true;
+    res.change.reached = true;
+    res.improved = true;
+    res.ok       = true;
+    return res;
 }
 
 // ---------------------------------------------------------------------------

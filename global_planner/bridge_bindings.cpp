@@ -119,6 +119,17 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def_readonly( "moves", &EscapeClearResult::moves )
         .def_readonly( "blocking", &EscapeClearResult::blocking );
 
+    py::class_<OptimizeResult>( m, "OptimizeResult" )   // §4.6
+        .def_readonly( "ok", &OptimizeResult::ok )
+        .def_readonly( "found", &OptimizeResult::found )
+        .def_readonly( "improved", &OptimizeResult::improved )
+        .def_readonly( "length_before", &OptimizeResult::lengthBefore )
+        .def_readonly( "length_after", &OptimizeResult::lengthAfter )
+        .def_readonly( "corners_before", &OptimizeResult::cornersBefore )
+        .def_readonly( "corners_after", &OptimizeResult::cornersAfter )
+        .def_readonly( "reason", &OptimizeResult::reason )
+        .def_readonly( "change", &OptimizeResult::change );
+
     py::class_<PnsBridge::TuneResult>( m, "TuneResult" )
         .def_readonly( "change", &PnsBridge::TuneResult::change )
         .def_readonly( "status", &PnsBridge::TuneResult::status )
@@ -169,6 +180,8 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def( "tune_length", &PnsBridge::tuneLength,
               py::arg( "x" ), py::arg( "y" ), py::arg( "end_x" ), py::arg( "end_y" ),
               py::arg( "pns_layer" ), py::arg( "target_length_nm" ) )
+        .def( "optimize_route", &PnsBridge::optimizeRoute,   // §4.6
+              py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ) )
         .def( "probe_via_move", &PnsBridge::probeViaMove,
               py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ) )
         .def( "move_via", &PnsBridge::moveVia,

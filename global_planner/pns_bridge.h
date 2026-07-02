@@ -120,6 +120,21 @@ struct ShoveResult
     RouteChange change;              // the committed change stream (when committed)
 };
 
+// §4.6 — result of optimizeRoute: PNS::OPTIMIZER post-route pass over ONE
+// assembled line (the joint-to-joint run of copper under the probe point).
+struct OptimizeResult
+{
+    bool        ok       = false;   // pass ran cleanly (line found, result collision-free)
+    bool        found    = false;   // copper found at the probe point
+    bool        improved = false;   // optimizer changed the geometry (then committed)
+    double      lengthBefore = 0.0; // nm — assembled line before / after the pass
+    double      lengthAfter  = 0.0;
+    int         cornersBefore = 0;  // line vertex count before / after
+    int         cornersAfter  = 0;
+    std::string reason;
+    RouteChange change;             // committed change stream (same contract as routeAndCommit)
+};
+
 // T-CORRIDOR — result of clearEscapeCorridor: the cascade of relocations it
 // committed while trying to open a straight probe from the escape point
 // toward the target direction.
@@ -280,6 +295,14 @@ public:
     // shoveComponentSearch, for a single via. `candidates` is a list of {nx,ny}.
     ShoveResult shoveViaSearch( double x, double y,
                                const std::vector<std::vector<double>>& candidates );
+
+    // §4.6 — post-route optimizer pass. Assembles the routed LINE under
+    // (x,y,pnsLayer) from the committed PNS world and runs PNS::OPTIMIZER on it
+    // (MERGE_SEGMENTS + SMART_PADS: iterative corner-cost reduction + pad-exit
+    // rerouting). Commits the improved line to the world through the same
+    // lossless parent-matched change stream as routeAndCommit; commits nothing
+    // (ok=false) if the optimizer finds no improvement or the result collides.
+    OptimizeResult optimizeRoute( double x, double y, int pnsLayer );
 
     // T-CORRIDOR — automate the manual cascade-clearing pattern (relocate the
     // nearest blocker, retry, repeat) for a fanout-saturated escape: probe a

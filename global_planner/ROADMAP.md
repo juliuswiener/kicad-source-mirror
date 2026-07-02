@@ -152,7 +152,7 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.3 | **Per-net class width/clearance** | netclasses already in `BOARD`; thread through bridge | correct constraints per net instead of global params | M | ★★ |
 | 4.4 | **Blind/buried vias** | relax adjacency in `planner_core.cpp:368`; config via-connectivity | escape routing on HDI boards (currently through-only adjacent) | M | ★★ |
 | 4.5 | **Multi-terminal / bus / Steiner** | `plan(vector<targets>)`; `SHOVE::AddHeads`/`ShoveMultiLines` (pns_shove.h:80) | nets with >2 pads; coordinated bus routing reduces order sensitivity | L | ★★ |
-| 4.6 | **Post-route optimizer pass** | `OPTIMIZER::Optimize` (pns_optimizer.h:116): MERGE_SEGMENTS/SMART_PADS | 10-20% shorter, cleaner traces | M | ★★ |
+| 4.6 | **Post-route optimizer pass** — **DONE** | `PnsBridge::optimizeRoute` (`pns_bridge.{h,cpp}`), `OPTIMIZER::Optimize` (pns_optimizer.h:116): MERGE_SEGMENTS+SMART_PADS | 10-20% shorter, cleaner traces | M | ★★ |
 | 4.7 | **Dragging / fixup pass** | `DRAGGER`/`MULTI_DRAGGER`/`COMPONENT_DRAGGER`, `StartDragging(...,DM_*)` (pns_router.h:208) | density recovery without full re-route | M | ★ |
 | 4.8 | **Mode strategy (walkaround→shove)** | `ROUTING_SETTINGS` (pns_routing_settings.h): RM_Walkaround/RM_Shove, ShoveVias, JumpOver, free-angle, corner mode | multi-pass: polite first, shove second | S | ★★ |
 | 4.9 | **Ratsnest-driven endpoints** | `GetNearestRatnestAnchor` (pns_router.h:247), `TOPOLOGY::NearestUnconnectedAnchorPoint` (pns_topology.h:63) | pick the *unrouted* ends automatically (fixes our placed=0 case) | M | ★★ |
@@ -163,6 +163,22 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.14 | **clearEscapeCorridor** — **DONE** | `PnsBridge::clearEscapeCorridor` (`pns_bridge.{h,cpp}`) | automates the manual "probe → find nearest blocker → shove_via/component_search → reprobe" cascade for a fanout-saturated pin escape (RST_N/XVF3800 case study, Wall A); composes existing `routeAndCheck`/`shoveViaSearch`/`shoveComponentSearch`, no new PNS surface | S | ★★ |
 
 (4.11 is listed here too because it's the bridge data-quality fix with the widest downstream effect.)
+
+### 4.6 Post-route optimizer pass ★★ (M) — `pns_bridge.{h,cpp}` (`optimizeRoute`) — **DONE**
+`PnsBridge::optimizeRoute(x, y, pnsLayer)` assembles the joint-to-joint LINE
+under the probe point from the committed PNS world (`NODE::AssembleLine`) and
+runs the real `PNS::OPTIMIZER` on it with MERGE_SEGMENTS + SMART_PADS — the
+same effects the interactive router applies post-shove (pattern verified
+against `SHOVE::runOptimizer` / `LINE_PLACER`). An improvement is applied on a
+`NODE::Branch` (`Replace`), collision-checked, and committed via
+`ROUTER::CommitRouting(NODE*)` — the same lossless parent-matched change
+stream as `routeAndCommit` (removed-by-uuid + added copper), so the host can
+mirror the cleanup onto the board. Returns before/after length + corner count
+(`OptimizeResult`); "no improvement" is an honest ok=true no-op, a colliding
+result is refused. Python: `optimize_route`. Verified via a bridge_smoketest
+block that routes+commits a real net, optimizes at a committed-segment
+midpoint, and prints length before/after (improvement is board-dependent, not
+asserted; found+collision-free is).
 
 ---
 
@@ -201,14 +217,14 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 3. **2.1 Yen** (done) **+ 2.2 spatial index** (done — T-GRID + T-NEIGHBOR)
    **+ 2.5 region/caching** (done — T-CACHE + T-REGION) — planner quality + scale.
 4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
-5. **4.6 optimizer + 4.8 mode strategy** — open; output cleanliness, cheap.
+5. **4.6 optimizer** — **done** (`optimizeRoute`); **4.8 mode strategy** — open; output cleanliness, cheap.
 6. **4.1 diff pairs + 4.2 length tuning** — **done**.
 7. **4.13 zone-antipad pre-carve + 4.14 clearEscapeCorridor** — **done** (found via a
    real-board case study, not the original research pass).
 8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
-Genuinely open as of this writing: 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
+Genuinely open as of this writing: 3.2, 3.3, 3.4, 4.3, 4.5,
 4.7, 4.8, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---

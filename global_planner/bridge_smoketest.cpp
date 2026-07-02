@@ -337,6 +337,35 @@ static int run( int argc, char** argv )
         { std::printf( "COMMIT FAIL: did not reach target (honest)\n" ); return 1; }
         std::printf( "COMMIT OK (reached, %zu added segs, %zu modified neighbours by uuid)\n",
                      c.addedSegs.size(), c.modSegUuids.size() );
+
+        // --- §4.6 optimizeRoute: post-route optimizer pass on the route we
+        // just committed to the world. Probe the midpoint of a committed
+        // segment; lengths before/after are PRINTED, not asserted (the
+        // improvement is board-dependent — a short 2-segment route may already
+        // be optimal). Assert only that the pass finds the copper and runs
+        // without crash/collision.
+        if( !c.addedSegs.empty() )
+        {
+            const auto& s = c.addedSegs.front();   // {x1,y1,x2,y2,width,boardLayer}
+            double mx = ( s[0] + s[2] ) / 2.0, my = ( s[1] + s[3] ) / 2.0;
+            int    ol = br.pnsLayer( (int) s[5] );
+
+            gbridge::OptimizeResult o = br.optimizeRoute( mx, my, ol );
+            std::printf( "optimizeRoute: ok=%d found=%d improved=%d "
+                         "length %.0f -> %.0f nm, corners %d -> %d, "
+                         "added=%zu removed=%zu reason='%s'\n",
+                         o.ok, o.found, o.improved, o.lengthBefore, o.lengthAfter,
+                         o.cornersBefore, o.cornersAfter,
+                         o.change.addedSegs.size(), o.change.removedUuids.size(),
+                         o.reason.c_str() );
+            if( !o.found )
+            { std::printf( "OPTIMIZE FAIL: no copper at committed-route midpoint\n" ); return 1; }
+            if( !o.ok )
+            { std::printf( "OPTIMIZE FAIL: pass did not run cleanly ('%s')\n",
+                           o.reason.c_str() ); return 1; }
+            std::printf( "OPTIMIZE OK (ran collision-free; length %.0f -> %.0f nm, "
+                         "improvement board-dependent)\n", o.lengthBefore, o.lengthAfter );
+        }
     }
 
     // --- probeTarget: seedable / congested flag for a target ----------------
