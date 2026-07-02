@@ -20,7 +20,7 @@
       "desc": "ROADMAP 2.4: replace capacity = floor(2*dist/pitch) proxy in planner_core.cpp with a geometric corridor-width computation between the two bounding fixed obstacles. Keep it a heuristic (PNS remains ground truth) but make it reflect actual gap geometry, not a constant-pitch assumption.",
       "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
       "files": ["global_planner/planner_core.cpp", "global_planner/tests.cpp", "global_planner/ROADMAP.md"],
-      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
+      "passes": true, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
       "id": "s4-optimizer-pass",
