@@ -267,13 +267,19 @@ std::vector<gplan::Obstacle> PnsBridge::getObstacles( int pnsLayer ) const
                     break;
                 }
 
-    // Keepout / rule-area zones -> FIXED.
+    // Keepout / rule-area zones -> FIXED (real outline, not bbox: keepouts are
+    // often long/thin/L-shaped, where a bbox massively overstates the block).
     for( ZONE* z : m_board->Zones() )
         if( z->GetIsRuleArea() )
             for( PCB_LAYER_ID bl : z->GetLayerSet().CuStack() )
                 if( onLayer( z, bl ) )
                 {
-                    out.push_back( { bboxPoly( z->GetBoundingBox() ), true, pnsLayer } );
+                    const SHAPE_POLY_SET* zoneOutline = z->Outline();
+                    if( zoneOutline && zoneOutline->OutlineCount() > 0
+                        && zoneOutline->Outline( 0 ).PointCount() >= 3 )
+                        out.push_back( { outlineToGplan( zoneOutline->Outline( 0 ) ), true, pnsLayer } );
+                    else
+                        out.push_back( { bboxPoly( z->GetBoundingBox() ), true, pnsLayer } );
                     break;
                 }
 
