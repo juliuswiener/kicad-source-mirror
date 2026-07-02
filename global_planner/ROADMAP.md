@@ -125,13 +125,17 @@ Fast first pass with L/Z/monotone "pattern" paths on the visibility graph for al
 nets; fall back to full A*/shove only on nets that overflow [FastRoute]. Big
 speedup on dense boards.
 
-### 3.3 CDT free-space backend (alt graph) ★★★ (L) — research bet
+### 3.3 CDT free-space backend (alt graph) ★★★ (L) — research bet — **DEFERRED**
 Replace/augment the inflated-corner visibility graph with a **constrained Delaunay
 triangulation** of free space; route on the dual graph and pull taut with the
 **funnel / string-pulling** algorithm to get minimal-length arbitrary-angle paths
 with far fewer nodes [Dayan97, Ozdal08, Guibas-Hershberger89, Lee82]. This is the
 "rubber-band/topological" model real topological routers use; it also gives
-rigorous capacity. Largest architectural change; highest ceiling.
+rigorous capacity. Largest architectural change; highest ceiling. **Deferred**
+per §7's own sequencing ("research bet, once the above is solid") — the cheap
+subset (3.4 funnel taut-path, no new graph) captures most of the shortening
+benefit already; a full CDT backend is a new graph primitive, not a bridge/core
+increment, and isn't justified until 3.4 proves insufficient on a real board.
 
 ### 3.4 Funnel taut-path post-step ★★ (M) — cheap subset of 3.3
 Even on the current graph, run **string-pulling** on each candidate to shorten and
@@ -220,17 +224,24 @@ Bottom line from the survey: **ML helps as a guide, not as the router.** Keep PN
 
 | # | Item | Why | E | I |
 |---|---|---|---|---|
-| 5.1 | **Learned net-ordering ranker** | cheap (<1 ms/net), 5-15% overflow reduction; "hardest/troublemakers-last" [Ma21/GRIP, MARouter/Zhu23] | M | ★★ |
-| 5.2 | **Congestion/routability prediction (GNN/CNN)** | predict hot regions → cost map for the planner; most mature ML-EDA area [Xie20, Tang22] | L | ★★ |
-| 5.3 | **Learned A* heuristic** | 20-40% fewer node expansions [Marcano22, NeuralA*/Yonetani21]; only if A* becomes the bottleneck | L | ★ |
-| 5.4 | **LLM = orchestrator only** | parse intent, pick params/strategy, drive rip-up/retry; never generate geometry [ChatEDA/Wu24, CircuitRouter/Bae24] | S | ★ |
+| 5.1 | **Learned net-ordering ranker** — **DEFERRED** | cheap (<1 ms/net), 5-15% overflow reduction; "hardest/troublemakers-last" [Ma21/GRIP, MARouter/Zhu23] | M | ★★ |
+| 5.2 | **Congestion/routability prediction (GNN/CNN)** — **DEFERRED** | predict hot regions → cost map for the planner; most mature ML-EDA area [Xie20, Tang22] | L | ★★ |
+| 5.3 | **Learned A* heuristic** — **DEFERRED** | 20-40% fewer node expansions [Marcano22, NeuralA*/Yonetani21]; only if A* becomes the bottleneck | L | ★ |
+| 5.4 | **LLM = orchestrator only** — **DEFERRED** | parse intent, pick params/strategy, drive rip-up/retry; never generate geometry [ChatEDA/Wu24, CircuitRouter/Bae24] | S | ★ |
 | — | **Skip:** end-to-end RL routing & LLM layout generation — poor generalization; analytical/geometric methods win [Cheng-Yan21, Agnesina23] | — | — |
+
+**Disposition (§3.3/5.1-5.4 research bets):** all **DEFERRED**, not dropped —
+they need a solid analytical/geometric baseline and real training data (own
+router logs, 4.12) neither of which exist yet. 5.3 is additionally gated on
+A* actually becoming the bottleneck (T-CACHE/T-GRID/T-REGION already keep
+graph builds cheap; no evidence A* itself is hot). Revisit once Tier 0-4 are
+solid and `LOGGER`-captured route data exists to train/evaluate against.
 
 Train data is free: log your own router's successes/failures (4.12) and learn from them.
 
 ---
 
-## 6. Tier 5 — testing & infra (Improvement)
+## 6. Tier 5 — testing & infra (Improvement) — **DEFERRED**
 
 - Adversarial geometry: near-touching hulls (2% eps band), sub-trackWidth channels,
   collinear/degenerate vertices, scale extremes (±1e9, ±1e-3).
@@ -238,6 +249,12 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
   multi-layer via on complex geometry, RM_Walkaround vs RM_Shove, unreachable/timeout.
 - Perf regression harness (assert n=100 < 100 ms), Python binding round-trip tests,
   property/fuzz tests (non-negative cost, distinct waypoints, reachability).
+
+**Disposition:** infra hardening, not a routing capability — deferred behind
+Tier 0-4 feature work. The existing ctest/TSAN/smoketest triad (see the
+verification pattern used throughout this ROADMAP's DONE items) already
+covers the functional surface as features land; this tier formalizes that
+into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
 
 ---
 
