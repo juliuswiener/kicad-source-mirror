@@ -13,7 +13,7 @@
       "desc": "ROADMAP 2.6: add tie-breaking (secondary key) to planner_core.cpp's A* to cut equal-cost expansion. Document why bidirectional A* / congestion-aware heuristic are deferred if not implemented (S-M effort item, lowest priority of Tier1 -- a tie-break alone satisfies the story if the other two are explicitly noted as future work in ROADMAP.md).",
       "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
       "files": ["global_planner/planner_core.cpp", "global_planner/ROADMAP.md"],
-      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
+      "passes": true, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
       "id": "s3-channel-capacity",
