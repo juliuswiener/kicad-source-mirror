@@ -203,7 +203,7 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.4 | **Blind/buried vias** | relax adjacency in `planner_core.cpp:368`; config via-connectivity | escape routing on HDI boards (currently through-only adjacent) | M | ★★ |
 | 4.5 | **Multi-terminal / bus / Steiner** — **DONE** | `Planner::planMultiTerminal` (`planner_core.{h,cpp}`) | nets with >2 pads; coordinated bus routing reduces order sensitivity | L | ★★ |
 | 4.6 | **Post-route optimizer pass** — **DONE** | `PnsBridge::optimizeRoute` (`pns_bridge.{h,cpp}`), `OPTIMIZER::Optimize` (pns_optimizer.h:116): MERGE_SEGMENTS+SMART_PADS | 10-20% shorter, cleaner traces | M | ★★ |
-| 4.7 | **Dragging / fixup pass** | `DRAGGER`/`MULTI_DRAGGER`/`COMPONENT_DRAGGER`, `StartDragging(...,DM_*)` (pns_router.h:208) | density recovery without full re-route | M | ★ |
+| 4.7 | **Dragging / fixup pass** — **DONE** | `PnsBridge::dragTrackPoint`/`probeTrackDrag` (`pns_bridge.{h,cpp}`), `DRAGGER`, `StartDragging(...,DM_CORNER|DM_SEGMENT)` (pns_router.h:208) | density recovery without full re-route | M | ★ |
 | 4.8 | **Mode strategy (walkaround→shove)** — **DONE** | `PnsBridge::routeWithStrategy` (`pns_bridge.{h,cpp}`): `ROUTING_SETTINGS` RM_Walkaround/RM_Shove via `setMode` | multi-pass: polite first, shove second | S | ★★ |
 | 4.9 | **Ratsnest-driven endpoints** | `GetNearestRatnestAnchor` (pns_router.h:247), `TOPOLOGY::NearestUnconnectedAnchorPoint` (pns_topology.h:63) | pick the *unrouted* ends automatically (fixes our placed=0 case) | M | ★★ |
 | 4.10 | **Board outline** — **DONE** | `board->GetBoardPolygonOutlines()` (T8, `pns_bridge.cpp` `getObstacles`) | thin FIXED wall around the board edge on every layer so the planner never proposes off-board routes | S | ★★ |
@@ -265,6 +265,26 @@ result is refused. Python: `optimize_route`. Verified via a bridge_smoketest
 block that routes+commits a real net, optimizes at a committed-segment
 midpoint, and prints length before/after (improvement is board-dependent, not
 asserted; found+collision-free is).
+
+### 4.7 General corner/segment drag ★ (M) — `pns_bridge.{h,cpp}` (`dragTrackPoint`/`probeTrackDrag`) — **DONE**
+`dragComponent`/`moveVia` already covered whole-footprint and single-via drags
+(PNS `DM_COMPONENT`/`DM_VIA`); the remaining density-recovery primitive was a
+plain corner/segment drag on a track — moving one point of an existing route
+without a full re-route. `PnsBridge::dragTrackPoint(x, y, newX, newY,
+allowViolations=false)` seeds `StartDragging` with the track (`SEGMENT_T`/
+`ARC_T`) nearest `(x,y)` and `DM_CORNER | DM_SEGMENT`; PNS's own
+`DRAGGER::startDragSegment` picks CORNER vs SEGMENT mode from how close the
+point is to the track's endpoint, so one call covers both drag kinds (mirrors
+how `StartDragging`'s single-segment path already ignores the passed-in mode
+in favour of that proximity test). Same commit-only-if-clean contract and
+lossless parent-matched change stream as `dragComponent`/`moveVia`; a locked
+parent track is refused up front. `probeTrackDrag` mirrors `probeDrag`/
+`probeViaMove`: speculative try-evaluate-discard (clean?/shoved count/track
+length), no commit. Python: `drag_track_point`, `probe_track_drag`. Verified
+via a bridge_smoketest block (`T-DRAG-PT`) that nudges the midpoint of a
+routed net-1 segment sideways by 0.1mm through both the probe and the commit
+call and prints the result (commit outcome is board-dependent, not asserted;
+the code path running is).
 
 ### 4.8 Mode strategy (walkaround→shove) ★★ (S) — `pns_bridge.{h,cpp}` (`routeWithStrategy`) — **DONE**
 `setMode`/`RouteMode` (walkaround/shove/mark-obstacles) already existed (T12)
@@ -334,7 +354,8 @@ into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
    quality + scale.
 4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
 5. **4.5 multi-terminal** — **done** (`planMultiTerminal`); **4.6 optimizer** — **done**
-   (`optimizeRoute`); **4.8 mode strategy** — **done** (`routeWithStrategy`).
+   (`optimizeRoute`); **4.7 corner/segment drag** — **done** (`dragTrackPoint`);
+   **4.8 mode strategy** — **done** (`routeWithStrategy`).
 6. **4.1 diff pairs + 4.2 length tuning** — **done**.
 7. **4.13 zone-antipad pre-carve + 4.14 clearEscapeCorridor** — **done** (found via a
    real-board case study, not the original research pass).
@@ -342,7 +363,7 @@ into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
    solid; still open.
 
 Genuinely open as of this writing: 3.3,
-4.7, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
+4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
 

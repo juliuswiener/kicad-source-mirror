@@ -191,6 +191,11 @@ PYBIND11_MODULE( gplan_kicad, m )
               py::arg( "allow_violations" ) = false )
         .def( "shove_via_search", &PnsBridge::shoveViaSearch,
               py::arg( "x" ), py::arg( "y" ), py::arg( "candidates" ) )
+        .def( "probe_track_drag", &PnsBridge::probeTrackDrag,   // §4.7
+              py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ) )
+        .def( "drag_track_point", &PnsBridge::dragTrackPoint,   // §4.7
+              py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ),
+              py::arg( "allow_violations" ) = false )
         .def( "clear_escape_corridor", &PnsBridge::clearEscapeCorridor,
               py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ),
               py::arg( "dir_x" ), py::arg( "dir_y" ), py::arg( "radius" ),

@@ -177,6 +177,17 @@ if sr.committed:
 #                                 if pv.clean: br.move_via(vx, vy, nx, ny)
 ```
 
+### Nudging one corner/segment of a routed track (density recovery, no full re-route)
+
+```python
+# Track running through (x,y); drag that point to (nx,ny). PNS itself decides
+# corner-drag vs segment-drag from how close (x,y) is to the track's endpoint.
+pd = br.probe_track_drag(x, y, nx, ny)
+if pd.clean:
+    dt = br.drag_track_point(x, y, nx, ny)
+    for u, g in zip(dt.mod_seg_uuids, dt.mod_segs): board.modify(u, g)
+```
+
 ### Placing an inner-layer via that crosses a plane zone (the antipad chicken-egg)
 
 A via crossing a plane zone (e.g. GND/power pour on an inner layer) has no

@@ -490,6 +490,41 @@ static int run( int argc, char** argv )
         }
     }
 
+    // --- T-DRAG-PT (§4.7): general corner/segment drag on an EXISTING routed
+    // segment on net 1 (mid-span point -> PNS auto-picks DM_SEGMENT). ---------
+    {
+        PCB_TRACK* seg = nullptr;
+        for( PCB_TRACK* t : board->Tracks() )
+            if( t->GetNetCode() == 1 && t->Type() == PCB_TRACE_T )
+            { seg = t; break; }
+
+        if( seg )
+        {
+            VECTOR2I s = seg->GetStart(), e = seg->GetEnd();
+            VECTOR2I mid = ( s + e ) / 2;
+            VECTOR2I perp( -( e.y - s.y ), e.x - s.x );   // sideways nudge
+            double   plen = perp.EuclideanNorm();
+            VECTOR2I nudge = ( plen > 0 )
+                ? VECTOR2I( (int)( perp.x * 100000.0 / plen ), (int)( perp.y * 100000.0 / plen ) )
+                : VECTOR2I( 0, 100000 );
+
+            gbridge::DragProbe pd = br.probeTrackDrag( mid.x, mid.y,
+                                                        mid.x + nudge.x, mid.y + nudge.y );
+            std::printf( "probeTrackDrag(mid+0.1mm): clean=%d cost=%.0f shoved=%d\n",
+                         pd.clean, pd.cost, pd.shoved );
+
+            gbridge::RouteChange dt = br.dragTrackPoint( mid.x, mid.y,
+                                                          mid.x + nudge.x, mid.y + nudge.y, false );
+            std::printf( "dragTrackPoint(mid+0.1mm): ok=%d placed=%d modSegs=%zu reason='%s'\n",
+                         dt.ok, dt.placed, dt.modSegs.size(), dt.reason.c_str() );
+            std::printf( "DRAG-PT ran (ok=%d, board-dependent)\n", dt.ok );
+        }
+        else
+        {
+            std::printf( "DRAG-PT: no net-1 segment found to drag; skipped\n" );
+        }
+    }
+
     // --- T9: make net 1 unrouted (remove its tracks), find the ratsnest target
     //          via the bridge, and route the now-unrouted net. ----------------
     {

@@ -1409,6 +1409,103 @@ ShoveResult PnsBridge::shoveViaSearch( double x, double y,
     return best;
 }
 
+// ---------------------------------------------------------------------------
+// §4.7 — general corner/segment drag. Seed is a track (SEGMENT_T/ARC_T), not
+// a via or footprint; PNS::DRAGGER::startDragSegment picks DM_CORNER vs
+// DM_SEGMENT itself based on how close (x,y) is to the track's endpoint.
+// ---------------------------------------------------------------------------
+RouteChange PnsBridge::dragTrackPoint( double x, double y, double newX, double newY,
+                                       bool allowViolations )
+{
+    RouteChange rc;
+    VECTOR2I p(  (int) std::lround( x ),    (int) std::lround( y ) );
+    VECTOR2I np( (int) std::lround( newX ), (int) std::lround( newY ) );
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( p );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( p, 200000 );
+    PNS::ITEM* seed = nullptr;
+    for( PNS::ITEM* it : hits.Items() )
+        if( it->OfKind( PNS::ITEM::SEGMENT_T | PNS::ITEM::ARC_T ) ) { seed = it; break; }
+    if( !seed )
+    { rc.reason = "no track at point"; return rc; }
+
+    if( seed->Parent() && seed->Parent()->IsLocked() )
+    { rc.reason = "track locked"; return rc; }
+
+    if( !m_router->StartDragging( p, seed, PNS::DM_CORNER | PNS::DM_SEGMENT ) )
+    { rc.reason = m_router->FailureReason().ToStdString(); return rc; }
+
+    m_router->Move( np, nullptr );          // moveDragging -> shove neighbours
+
+    auto* hi = static_cast<HeadlessIface*>( m_iface.get() );
+    hi->clearChanges();
+    bool committed = m_router->FixRoute( np, nullptr, false, allowViolations );
+
+    if( committed )
+    {
+        RouteChange& ch = hi->changes;
+        rc.addedSegs   = ch.addedSegs;   rc.addedVias = ch.addedVias;
+        rc.modSegUuids = ch.modSegUuids; rc.modSegs   = ch.modSegs;
+        rc.modViaUuids = ch.modViaUuids; rc.modVias   = ch.modVias;
+        rc.removedUuids = ch.removedUuids;
+        rc.vias    = static_cast<int>( ch.addedVias.size() );
+        rc.placed  = !rc.addedSegs.empty() || !rc.modSegs.empty() || !rc.modVias.empty();
+        rc.ok      = true;
+        rc.reached = true;
+    }
+    else
+    {
+        rc.ok = false;
+        rc.reason = "track drag would violate clearance (shove not clean)";
+    }
+
+    m_router->StopRouting();
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
+// Speculative corner/segment drag (try, evaluate, discard — no commit).
+// ---------------------------------------------------------------------------
+DragProbe PnsBridge::probeTrackDrag( double x, double y, double newX, double newY )
+{
+    DragProbe pr;
+    VECTOR2I p(  (int) std::lround( x ),    (int) std::lround( y ) );
+    VECTOR2I np( (int) std::lround( newX ), (int) std::lround( newY ) );
+
+    PNS::ITEM_SET hits = m_router->QueryHoverItems( p );
+    if( hits.Empty() )
+        hits = m_router->QueryHoverItems( p, 200000 );
+    PNS::ITEM* seed = nullptr;
+    for( PNS::ITEM* it : hits.Items() )
+        if( it->OfKind( PNS::ITEM::SEGMENT_T | PNS::ITEM::ARC_T ) ) { seed = it; break; }
+    if( !seed )
+        return pr;
+    if( seed->Parent() && seed->Parent()->IsLocked() )
+        return pr;                          // locked: never movable
+
+    if( !m_router->StartDragging( p, seed, PNS::DM_CORNER | PNS::DM_SEGMENT ) )
+        return pr;
+    m_router->Move( np, nullptr );
+
+    PNS::DRAG_ALGO* dr = m_router->GetDragger();
+    PNS::NODE* node = dr ? dr->CurrentNode() : nullptr;
+    if( node )
+    {
+        PNS::ITEM_SET traces = dr->Traces();
+        pr.clean = !node->CheckColliding( traces );
+        double len = 0; int n = 0;
+        for( PNS::ITEM* it : traces.Items() )
+            if( it->OfKind( PNS::ITEM::SEGMENT_T ) )
+            { len += static_cast<PNS::SEGMENT*>( it )->Seg().Length(); ++n; }
+        pr.cost = len;
+        pr.shoved = n;
+    }
+
+    m_router->StopRouting();                // DISCARD — speculative only
+    return pr;
+}
+
 namespace {
 double dist2D( double ax, double ay, double bx, double by )
 {

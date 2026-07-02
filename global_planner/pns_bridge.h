@@ -296,6 +296,24 @@ public:
     ShoveResult shoveViaSearch( double x, double y,
                                const std::vector<std::vector<double>>& candidates );
 
+    // §4.7 — general corner/segment drag (PNS DM_CORNER/DM_SEGMENT), for
+    // density recovery on a single track without a full re-route: drag the
+    // point on a track nearest (x,y) to (newX,newY). Same family as
+    // dragComponent/moveVia, but the seed is a SEGMENT_T/ARC_T track item
+    // instead of a footprint or via; PNS itself decides corner-drag (click
+    // near an endpoint) vs segment-drag (click mid-span) once dragging starts
+    // (DRAGGER::startDragSegment), so one call covers both.
+    //
+    // probeTrackDrag: speculative — try, evaluate, DISCARD (no commit). Same
+    // contract as probeDrag/probeViaMove.
+    DragProbe probeTrackDrag( double x, double y, double newX, double newY );
+
+    // dragTrackPoint: commits only if the drag is clean (or allowViolations
+    // =true). Returns the change stream (host applies track mods by uuid —
+    // same lossless contract as dragComponent/moveVia).
+    RouteChange dragTrackPoint( double x, double y, double newX, double newY,
+                               bool allowViolations = false );
+
     // §4.6 — post-route optimizer pass. Assembles the routed LINE under
     // (x,y,pnsLayer) from the committed PNS world and runs PNS::OPTIMIZER on it
     // (MERGE_SEGMENTS + SMART_PADS: iterative corner-cost reduction + pad-exit
