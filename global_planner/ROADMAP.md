@@ -159,10 +159,34 @@ subset (3.4 funnel taut-path, no new graph) captures most of the shortening
 benefit already; a full CDT backend is a new graph primitive, not a bridge/core
 increment, and isn't justified until 3.4 proves insufficient on a real board.
 
-### 3.4 Funnel taut-path post-step ★★ (M) — cheap subset of 3.3
-Even on the current graph, run **string-pulling** on each candidate to shorten and
-remove needless corners before handing waypoints to PNS [Guibas-Hershberger89].
-Better waypoints → fewer PNS shove iterations.
+### 3.4 Funnel taut-path post-step ★★ (M) — cheap subset of 3.3 — **DONE**
+`Planner::tautenPath` (`planner_core.{h,cpp}`) is a **string-pulling** post-step run on
+every candidate `Path`'s waypoints (after `simplify()`, both in `tryPatternPath`'s
+single-shape result and in the Yen's-search loop) right before `plan()` returns
+[Guibas-Hershberger89]. No new graph, no CDT (that's still 3.3, deferred): from each
+waypoint it jumps to the FARTHEST later waypoint with an unobstructed same-layer
+sightline — the exact same `edgeBlocked` hull test every other candidate edge in the
+codebase is checked against, so a shortcut can never cross an obstacle the rest of the
+planner wouldn't already treat as blocked — dropping every corner in between. A via
+(layer change) is never skipped over: the scan only ever compares waypoints that share
+a layer, and once the sequence moves past a via there are no more same-layer
+candidates behind it to jump to. Because a shortcut segment is by construction never
+longer than the corners it replaces (triangle inequality), this can only shorten a
+path, never lengthen one; `Path::cost` is recomputed from the tautened waypoints
+(`waypointsCost`) so it stays consistent with what's actually returned, replacing the
+old node-id-keyed `pathCost` for the final result set.
+On the exact/near-complete visibility graph this codebase already builds (every
+candidate edge is an exact `edgeBlocked` test, and `MIN_NEIGHBORS` candidate
+generation is generous enough that small-to-medium obstacle courses get a
+fully-tested graph), the existing A*/Yen's search is usually already close to taut on
+its own — `tautenPath` mainly earns its keep as a cheap, structural guarantee for the
+cases the graph search *can't* reach optimally (dense fields where candidate
+generation is neighbor-limited, or congestion-biased detours that are no longer
+necessary once a candidate path is fixed) rather than a guaranteed win on every call.
+`T-TAUT` in `tests.cpp` covers the correctness side on a weaving obstacle course
+(direct line and both pattern L-corners blocked, forcing the full corner-graph search):
+every returned path segment still clears every obstacle by margin, and the tautened
+length stays within 1.5x of the straight-line start-target distance.
 
 ---
 
@@ -305,7 +329,8 @@ into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
 2. **4.11 real hulls + 4.9 ratsnest endpoints + 4.10 board outline** — **done**.
 3. **2.1 Yen** (done) **+ 2.2 spatial index** (done — T-GRID + T-NEIGHBOR)
    **+ 2.5 region/caching** (done — T-CACHE + T-REGION)
-   **+ 3.2 pattern-path fast-first-pass** (done — `tryPatternPath`) — planner
+   **+ 3.2 pattern-path fast-first-pass** (done — `tryPatternPath`)
+   **+ 3.4 funnel taut-path post-step** (done — `tautenPath`) — planner
    quality + scale.
 4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
 5. **4.5 multi-terminal** — **done** (`planMultiTerminal`); **4.6 optimizer** — **done**
@@ -316,7 +341,7 @@ into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
 8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
-Genuinely open as of this writing: 3.3, 3.4,
+Genuinely open as of this writing: 3.3,
 4.7, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
