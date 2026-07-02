@@ -23,7 +23,7 @@
 
 class BOARD;
 class SETTINGS_MANAGER;
-namespace PNS { class ROUTER; class ITEM; class ROUTING_SETTINGS; }
+namespace PNS { class ROUTER; class ITEM; class ROUTING_SETTINGS; class LOGGER; }
 class PNS_KICAD_IFACE_BASE;
 
 namespace gbridge {
@@ -347,6 +347,20 @@ public:
     BOARD*       board() const { return m_board; }
     PNS::ROUTER* router() const { return m_router.get(); }
 
+    // §4.12 — LOGGER-backed regression capture / deterministic replay. PNS's
+    // own ROUTER only allocates its internal LOGGER when the process-wide
+    // ADVANCED_CFG::m_EnableRouterDump flag is set (a dev-config knob, not
+    // something a bridge session can toggle cleanly), so the bridge keeps its
+    // OWN PNS::LOGGER instead: routeAndCommit logs an EVT_START_ROUTE/EVT_FIX
+    // pair per call when logging is enabled, the same event vocabulary
+    // ROUTER itself uses (pns_logger.h EVENT_TYPE) and the same JSON format
+    // (LOGGER::FormatLogFileAsJSON) qa/tools/pns/pns_log_player.cpp replays.
+    void enableLogging( bool enable );
+    // JSON log of every routeAndCommit call since the last enableLogging(true)
+    // (LOGGER::FormatLogFileAsJSON on the captured events). Empty string if
+    // logging was never enabled.
+    std::string dumpLog() const;
+
 private:
     std::unique_ptr<SETTINGS_MANAGER>     m_settings;
     BOARD*                                m_board = nullptr;   // owned via m_boardHolder
@@ -355,6 +369,7 @@ private:
     std::unique_ptr<PNS::ROUTER>          m_router;
     std::unique_ptr<PNS::ROUTING_SETTINGS> m_routingSettings;
     RouteMode                             m_mode = RouteMode::Shove;   // T12
+    std::unique_ptr<PNS::LOGGER>          m_sessionLogger;             // §4.12
 };
 
 } // namespace gbridge

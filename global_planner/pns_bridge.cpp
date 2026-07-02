@@ -39,6 +39,7 @@
 #include <router/pns_meander_placer_base.h>
 #include <router/pns_meander.h>
 #include <router/pns_optimizer.h>
+#include <router/pns_logger.h>
 
 using namespace gbridge;
 
@@ -651,6 +652,9 @@ RouteChange PnsBridge::routeAndCommit( const std::vector<gplan::Waypoint>& wps )
         return rc;
     }
 
+    if( m_sessionLogger )
+        m_sessionLogger->Log( PNS::LOGGER::EVT_START_ROUTE, startP, startItem, &sizes, layer );
+
     for( size_t i = 1; i < wps.size(); ++i )
     {
         VECTOR2I p = toV( wps[i] );
@@ -720,6 +724,9 @@ RouteChange PnsBridge::routeAndCommit( const std::vector<gplan::Waypoint>& wps )
     hi->clearChanges();
     m_router->CommitRouting();
 
+    if( m_sessionLogger )
+        m_sessionLogger->Log( PNS::LOGGER::EVT_FIX, tgt, nullptr, &sizes, tgtL );
+
     RouteChange& ch = hi->changes;
     rc.addedSegs   = ch.addedSegs;   rc.addedVias = ch.addedVias;
     rc.modSegUuids = ch.modSegUuids; rc.modSegs   = ch.modSegs;
@@ -728,6 +735,37 @@ RouteChange PnsBridge::routeAndCommit( const std::vector<gplan::Waypoint>& wps )
     rc.vias   = static_cast<int>( ch.addedVias.size() );
     rc.ok     = true;
     return rc;
+}
+
+// ---------------------------------------------------------------------------
+// §4.12 — LOGGER-backed regression capture. See header comment for why this
+// is a bridge-owned LOGGER rather than wiring into ROUTER's own (config-gated)
+// internal one.
+// ---------------------------------------------------------------------------
+void PnsBridge::enableLogging( bool enable )
+{
+    if( enable )
+    {
+        if( !m_sessionLogger )
+            m_sessionLogger = std::make_unique<PNS::LOGGER>();
+        m_sessionLogger->Clear();
+    }
+    else
+    {
+        m_sessionLogger.reset();
+    }
+}
+
+std::string PnsBridge::dumpLog() const
+{
+    if( !m_sessionLogger )
+        return std::string();
+
+    PNS::LOGGER::LOG_DATA logData;
+    logData.m_Mode   = m_router->Mode();
+    logData.m_Events = m_sessionLogger->GetEvents();
+
+    return PNS::LOGGER::FormatLogFileAsJSON( logData ).ToStdString();
 }
 
 // ---------------------------------------------------------------------------

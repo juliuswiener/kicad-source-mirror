@@ -324,6 +324,9 @@ static int run( int argc, char** argv )
         { std::printf( "T10 FAIL: route after re-attach placed nothing\n" ); return 1; }
     }
 
+    // --- T-LOG (§4.12): capture the next routeAndCommit as a replayable log. --
+    br.enableLogging( true );
+
     // --- routeAndCommit: lossless commit-to-world (PNS change stream) --------
     if( !paths.empty() )
     {
@@ -366,7 +369,21 @@ static int run( int argc, char** argv )
             std::printf( "OPTIMIZE OK (ran collision-free; length %.0f -> %.0f nm, "
                          "improvement board-dependent)\n", o.lengthBefore, o.lengthAfter );
         }
+
+        std::string log = br.dumpLog();
+        size_t nEvents = 0;
+        for( size_t pos = log.find( "\"type\"" ); pos != std::string::npos;
+             pos = log.find( "\"type\"", pos + 1 ) )
+            ++nEvents;
+        std::printf( "T-LOG: dumpLog() -> %zu bytes, %zu event(s)\n", log.size(), nEvents );
+        if( log.find( "\"events\"" ) == std::string::npos || nEvents < 2 )
+        { std::printf( "T-LOG FAIL: dumped JSON missing expected route events\n" ); return 1; }
+        std::printf( "T-LOG OK (start/fix events captured)\n" );
     }
+    br.enableLogging( false );
+    if( !br.dumpLog().empty() )
+    { std::printf( "T-LOG FAIL: dumpLog() not empty after enableLogging(false)\n" ); return 1; }
+    std::printf( "T-LOG-DISABLE OK\n" );
 
     // --- probeTarget: seedable / congested flag for a target ----------------
     {

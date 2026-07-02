@@ -208,7 +208,7 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.9 | **Ratsnest-driven endpoints** | `GetNearestRatnestAnchor` (pns_router.h:247), `TOPOLOGY::NearestUnconnectedAnchorPoint` (pns_topology.h:63) | pick the *unrouted* ends automatically (fixes our placed=0 case) | M | ★★ |
 | 4.10 | **Board outline** — **DONE** | `board->GetBoardPolygonOutlines()` (T8, `pns_bridge.cpp` `getObstacles`) | thin FIXED wall around the board edge on every layer so the planner never proposes off-board routes | S | ★★ |
 | 4.11 | **Real `Hull()` not bbox** — **DONE** | `pad->GetEffectivePolygon(bl)` (T7) for pads; `zone->Outline()` (this pass) for keepout zones — both replace `bboxPoly`. Only vias still use bbox (acceptable: near-circular already) | tighter packing; less false congestion | M | ★★★ |
-| 4.12 | **LOGGER replay** | `LOGGER` (pns_logger.h:48), `FormatLogFileAsJSON` | regression capture, audit, deterministic replay | S | ★ |
+| 4.12 | **LOGGER replay** — **DONE** | `PnsBridge::enableLogging`/`dumpLog` (`pns_bridge.{h,cpp}`), `LOGGER` (pns_logger.h:48), `FormatLogFileAsJSON` | regression capture, audit, deterministic replay | S | ★ |
 | 4.13 | **Zone-antipad pre-carve** — **DONE** | `gplan_zone_refill` (`global_planner/zone_refill_tool.cpp`), real `ZONE_FILLER::Fill()` | breaks the plane-via chicken-egg (via has no antipad until a fill runs WITH it present) found on a real board (RST_N/XVF3800 case study); a separate binary since real `ZONE_FILLER` only lives in `pcbnew_kiface_objects`, which conflicts symbol-for-symbol with the QA mocks the bridge/smoketest link for a light build | S | ★★★ |
 | 4.14 | **clearEscapeCorridor** — **DONE** | `PnsBridge::clearEscapeCorridor` (`pns_bridge.{h,cpp}`) | automates the manual "probe → find nearest blocker → shove_via/component_search → reprobe" cascade for a fanout-saturated pin escape (RST_N/XVF3800 case study, Wall A); composes existing `routeAndCheck`/`shoveViaSearch`/`shoveComponentSearch`, no new PNS surface | S | ★★ |
 
@@ -300,6 +300,22 @@ exit path, mirroring the placer-mode restore already used by
 bridge_smoketest block that un-routes net 1 (T9's pattern), then routes it
 through `routeWithStrategy` and asserts the commit reaches the target.
 
+### 4.12 LOGGER replay ★ (S) — `pns_bridge.{h,cpp}` (`enableLogging`/`dumpLog`) — **DONE**
+PNS's own `ROUTER::m_logger` only exists when the process-wide
+`ADVANCED_CFG::m_EnableRouterDump` dev-config flag is set — not something a
+bridge session can toggle per-call, and `ADVANCED_CFG::GetCfg()` returns a
+`const&` besides. So the bridge keeps its OWN `PNS::LOGGER` instance instead
+of wiring into ROUTER's: `PnsBridge::enableLogging(true)` allocates/clears it;
+`routeAndCommit` then logs an `EVT_START_ROUTE`/`EVT_FIX` pair per call — the
+same event vocabulary and JSON shape (`LOGGER::FormatLogFileAsJSON`) that
+`qa/tools/pns/pns_log_player.cpp` already replays — while logging is enabled.
+`dumpLog()` returns the captured session as that JSON string (empty once
+`enableLogging(false)` clears the logger). Python: `enable_logging`,
+`dump_log`. Verified via a bridge_smoketest block (`T-LOG`) that enables
+logging around a real `routeAndCommit`, asserts the dumped JSON carries an
+`"events"` array with both events, then asserts `dumpLog()` goes back to
+empty after disabling.
+
 ---
 
 ## 5. Tier 4 — ML, selectively (Expansion)
@@ -359,11 +375,12 @@ into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
 6. **4.1 diff pairs + 4.2 length tuning** — **done**.
 7. **4.13 zone-antipad pre-carve + 4.14 clearEscapeCorridor** — **done** (found via a
    real-board case study, not the original research pass).
-8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
+8. **4.12 LOGGER replay** — **done** (`enableLogging`/`dumpLog`).
+9. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
 Genuinely open as of this writing: 3.3,
-4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
+all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
 

@@ -199,5 +199,8 @@ PYBIND11_MODULE( gplan_kicad, m )
         .def( "clear_escape_corridor", &PnsBridge::clearEscapeCorridor,
               py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ),
               py::arg( "dir_x" ), py::arg( "dir_y" ), py::arg( "radius" ),
-              py::arg( "step_nm" ) = 100000.0, py::arg( "max_iterations" ) = 8 );
+              py::arg( "step_nm" ) = 100000.0, py::arg( "max_iterations" ) = 8 )
+        .def( "enable_logging", &PnsBridge::enableLogging,   // §4.12
+              py::arg( "enable" ) )
+        .def( "dump_log", &PnsBridge::dumpLog );
 }

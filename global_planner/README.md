@@ -221,6 +221,21 @@ br = gplan_kicad.PnsBridge(); br.load("board.kicad_pcb")   # picks up the refill
 Without `--add-via`, it just re-runs the zone filler on the board as-is (e.g.
 after any other tool wrote raw geometry without updating fills).
 
+### Capturing a routing session for regression replay
+
+```python
+br.enable_logging(True)
+c = br.route_and_commit(waypoints)   # every route_and_commit call while
+...                                   # enabled logs a start/fix event pair
+log_json = br.dump_log()             # PNS::LOGGER::FormatLogFileAsJSON
+open("session.json", "w").write(log_json)
+br.enable_logging(False)             # dump_log() returns "" again after this
+```
+
+`log_json` is the same event/JSON format `qa/tools/pns/pns_log_player.cpp`
+already parses — use it to capture a real host session for later replay
+against a bare `PNS::ROUTER`, independent of the bridge.
+
 ## API
 
 ```cpp
