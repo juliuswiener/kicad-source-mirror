@@ -148,6 +148,16 @@ private:
     // corner-graph search unchanged.
     bool   tryPatternPath( Point start, int sL, Point target, int tL, Path& out ) const;
 
+    // ROADMAP 3.4 — taut-string post-step ("cheap subset of 3.3": no CDT,
+    // just line-of-sight shortcuts on the already-found waypoints). From
+    // each waypoint, jumps to the FARTHEST later waypoint with an
+    // unobstructed same-layer sightline (edgeBlocked), dropping the corners
+    // in between; never skips a via (layer change) since only same-layer
+    // pairs are tried. A shortcut segment can only be <= the corners it
+    // replaces (triangle inequality), so this never lengthens a path.
+    std::vector<Waypoint> tautenPath( const std::vector<Waypoint>& wps ) const;
+    double                waypointsCost( const std::vector<Waypoint>& wps ) const;
+
     double edgeWeight( Point a, Point b, int layer ) const;
     bool   edgeBlocked( Point a, Point b, int layer ) const;
     bool   viaSiteClear( Point p, int layer ) const;

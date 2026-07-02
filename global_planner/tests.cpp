@@ -395,6 +395,37 @@ int main()
         CHECK( anyClears, "T-PATTERN: fallback route clears every obstacle by margin" );
     }
 
+    // T-TAUT (ROADMAP 3.4): taut-string post-step. A weaving obstacle course
+    // forces the full corner-graph search (direct line blocked, both pattern
+    // L-corners degenerate since start/target are collinear); the taut-string
+    // pass then keeps the returned path close to the straight-line length
+    // instead of hugging every intermediate hull corner the graph search
+    // happened to visit.
+    {
+        std::vector<Obstacle> obs = {
+            { box( 4, 1, 2, 2 ), true, 0 },
+            { box( 8, -1, 2, 2 ), true, 0 },
+            { box( 12, 1, 2, 2 ), true, 0 },
+            { box( 16, -1, 2, 2 ), true, 0 },
+        };
+        Planner pl( obs, base );
+        auto paths = pl.plan( { 0, 0 }, { 20, 0 } );
+        CHECK( !paths.empty(), "T-TAUT: weaving obstacle course still routes" );
+        const Path& p = paths.front();
+        CHECK( pathClears( p, obs, margin ), "T-TAUT: taut path still clears every obstacle" );
+
+        double len = 0.0;
+        for( size_t i = 0; i + 1 < p.waypoints.size(); ++i )
+            if( p.waypoints[i].layer == p.waypoints[i + 1].layer )
+                len += std::hypot( p.waypoints[i + 1].p.x - p.waypoints[i].p.x,
+                                    p.waypoints[i + 1].p.y - p.waypoints[i].p.y );
+        double straight = 20.0;
+        std::printf( "T-TAUT: %zu waypoints, length %.3f (straight-line %.3f, ratio %.3f)\n",
+                     p.waypoints.size(), len, straight, len / straight );
+        CHECK( len < straight * 1.5,
+               "T-TAUT: taut path length stays close to the straight-line lower bound" );
+    }
+
     std::printf( "\n%d passed, %d failed\n", g_pass, g_fail );
     return g_fail ? 1 : 0;
 }

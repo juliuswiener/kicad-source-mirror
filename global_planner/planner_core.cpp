@@ -784,9 +784,45 @@ bool Planner::tryPatternPath( Point start, int sL, Point target, int tL, Path& o
     std::vector<Waypoint> raw;
     for( const Point& p : *best )
         raw.push_back( { p, sL } );
-    out.waypoints = simplify( raw );
-    out.cost      = bestCost;
+    out.waypoints = tautenPath( simplify( raw ) );
+    out.cost      = waypointsCost( out.waypoints );
     return true;
+}
+
+std::vector<Waypoint> Planner::tautenPath( const std::vector<Waypoint>& wps ) const
+{
+    if( wps.size() <= 2 )
+        return wps;
+    std::vector<Waypoint> out;
+    out.push_back( wps.front() );
+    size_t i = 0;
+    while( i + 1 < wps.size() )
+    {
+        size_t next = i + 1;
+        for( size_t j = wps.size() - 1; j > i + 1; --j )
+        {
+            if( wps[j].layer != wps[i].layer )
+                continue;                       // only shortcut within one layer run
+            if( !edgeBlocked( wps[i].p, wps[j].p, wps[i].layer ) )
+            { next = j; break; }                 // farthest clear same-layer target wins
+        }
+        out.push_back( wps[next] );
+        i = next;
+    }
+    return out;
+}
+
+double Planner::waypointsCost( const std::vector<Waypoint>& wps ) const
+{
+    double cost = 0.0;
+    for( size_t i = 0; i + 1 < wps.size(); ++i )
+    {
+        if( wps[i].layer == wps[i + 1].layer )
+            cost += edgeWeight( wps[i].p, wps[i + 1].p, wps[i].layer );
+        else
+            cost += m_params.viaCost;
+    }
+    return cost;
 }
 
 std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
@@ -953,8 +989,8 @@ std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
         std::vector<Waypoint> raw;
         for( int idx : nodes )
             raw.push_back( { m_nodes[idx].p, m_nodes[idx].layer } );
-        p.waypoints = simplify( raw );
-        p.cost = pathCost( nodes );
+        p.waypoints = tautenPath( simplify( raw ) );
+        p.cost = waypointsCost( p.waypoints );
 
         bool dup = false;
         for( const Path& q : result )
