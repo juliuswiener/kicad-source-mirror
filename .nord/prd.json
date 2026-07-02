@@ -1,142 +1,89 @@
 {
-  "goal": "Implement gplan near-term roadmap T1-T12 to production-ready, each gated deterministically",
+  "goal": "gplan roadmap: genuinely-remaining items (post-audit, see global_planner/ROADMAP.md commit 3b01a5d6a9) -- each gated by full ctest + bridge smoketest regression against real KiCad/PNS on both board fixtures",
   "stories": [
     {
-      "id": "T1",
-      "desc": "thread-safe m_bumps",
-      "gate": "ctest",
-      "files": [
-        "global_planner/planner_core.h",
-        "global_planner/planner_core.cpp",
-        "global_planner/tests.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s1-region-cache",
+      "desc": "ROADMAP 2.5: add plan(start,target,bbox)/setRegion(bbox) to gplan::Planner; cache node/edge adjacency and rebuild only when obstacles/bumps change instead of every plan() call. Add/extend a ctest case proving the cache is actually reused (e.g. a counter or timing assertion) and that results match the uncached path.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/planner_core.h", "global_planner/planner_core.cpp", "global_planner/tests.cpp", "global_planner/ROADMAP.md"],
+      "passes": true, "redCount": 0, "escalated": true, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T2",
-      "desc": "via-site interior check",
-      "gate": "ctest",
-      "files": [
-        "global_planner/planner_core.cpp",
-        "global_planner/tests.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s2-astar-improvements",
+      "desc": "ROADMAP 2.6: add tie-breaking (secondary key) to planner_core.cpp's A* to cut equal-cost expansion. Document why bidirectional A* / congestion-aware heuristic are deferred if not implemented (S-M effort item, lowest priority of Tier1 -- a tie-break alone satisfies the story if the other two are explicitly noted as future work in ROADMAP.md).",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/planner_core.cpp", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T3",
-      "desc": "input validation",
-      "gate": "ctest",
-      "files": [
-        "global_planner/planner_core.cpp",
-        "global_planner/tests.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s3-channel-capacity",
+      "desc": "ROADMAP 2.4: replace capacity = floor(2*dist/pitch) proxy in planner_core.cpp with a geometric corridor-width computation between the two bounding fixed obstacles. Keep it a heuristic (PNS remains ground truth) but make it reflect actual gap geometry, not a constant-pitch assumption.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/planner_core.cpp", "global_planner/tests.cpp", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T6",
-      "desc": "swept-polygon edge blocking",
-      "gate": "ctest",
-      "files": [
-        "global_planner/planner_core.cpp",
-        "global_planner/tests.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s4-optimizer-pass",
+      "desc": "ROADMAP 4.6: expose PNS::OPTIMIZER (pns_optimizer.h) as a PnsBridge post-route pass (e.g. optimizeRoute or fold into routeAndCommit) using MERGE_SEGMENTS/SMART_PADS effects. Add Python binding mirroring existing method conventions. Add a bridge_smoketest.cpp block that measures trace length before/after on a real route and prints the result (board-dependent, log only, do not assert a specific percentage).",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/pns_bridge.h", "global_planner/pns_bridge.cpp", "global_planner/bridge_bindings.cpp", "global_planner/bridge_smoketest.cpp", "global_planner/README.md", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T4",
-      "desc": "Yen k-distinct paths",
-      "gate": "ctest",
-      "files": [
-        "global_planner/planner_core.cpp",
-        "global_planner/tests.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s5-mode-strategy",
+      "desc": "ROADMAP 4.8: PnsBridge::setMode/RouteMode already exists (walkaround/shove/mark-obstacles primitives, T12) but there is no automated multi-pass STRATEGY. Add a bridge method (e.g. routeWithStrategy or a strategy flag on routeAndCommit) that tries RM_Walkaround first and falls back to RM_Shove only if walkaround fails, restoring the original mode afterward (mirror the mode-restore pattern already used in routeDiffPairAndCommit). Add Python binding + smoketest coverage.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/pns_bridge.h", "global_planner/pns_bridge.cpp", "global_planner/bridge_bindings.cpp", "global_planner/bridge_smoketest.cpp", "global_planner/README.md", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T5",
-      "desc": "spatial index (grid)",
-      "gate": "ctest+perf",
-      "files": [
-        "global_planner/planner_core.cpp",
-        "global_planner/perf_tests.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s6-netclass-constraints",
+      "desc": "ROADMAP 4.3: thread per-net-class width/clearance from BOARD netclasses into the bridge's routing calls generally (today netClass is only read narrowly inside tuneLength for MEANDER_SETTINGS). Verify routeAndCheck/routeAndCommit already call ImportSizes per the existing README mention -- if so this story is about confirming/documenting + closing any gap, not necessarily new plumbing; read the actual code before assuming work is needed.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/pns_bridge.cpp", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T10",
-      "desc": "reloadable bridge",
-      "gate": "smoketest",
-      "files": [
-        "global_planner/pns_bridge.cpp",
-        "global_planner/pns_bridge.h",
-        "global_planner/bridge_smoketest.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s7-general-drag",
+      "desc": "ROADMAP 4.7: dragComponent (DM_COMPONENT) and moveVia (DM_VIA) already exist. Add general corner/segment drag (DM_CORNER/DM_SEGMENT via PNS StartDragging) for density recovery without a full re-route -- e.g. dragTrackPoint(x,y,newX,newY). Mirror the probe-then-commit pattern (probeDrag/dragComponent). Python binding + smoketest coverage.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/pns_bridge.h", "global_planner/pns_bridge.cpp", "global_planner/bridge_bindings.cpp", "global_planner/bridge_smoketest.cpp", "global_planner/README.md", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T7",
-      "desc": "real Hull() extraction",
-      "gate": "smoketest",
-      "files": [
-        "global_planner/pns_bridge.cpp",
-        "global_planner/bridge_smoketest.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s8-logger-replay",
+      "desc": "ROADMAP 4.12: expose PNS::LOGGER (pns_logger.h) / FormatLogFileAsJSON through the bridge for regression capture / deterministic replay of a routing session. Add a bridge method to enable/dump the log and a smoketest block exercising it on a real route.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/pns_bridge.h", "global_planner/pns_bridge.cpp", "global_planner/bridge_bindings.cpp", "global_planner/bridge_smoketest.cpp", "global_planner/README.md", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T8",
-      "desc": "board outline obstacle",
-      "gate": "smoketest",
-      "files": [
-        "global_planner/pns_bridge.cpp",
-        "global_planner/bridge_smoketest.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s9-multi-terminal",
+      "desc": "ROADMAP 4.5: add multi-terminal planning to gplan::Planner (plan(vector<Point> targets) or similar) for nets with >2 pads / Steiner-style routing, reducing order sensitivity for buses. This is core-side (planner_core.cpp), KiCad-free. Add ctest coverage.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/planner_core.h", "global_planner/planner_core.cpp", "global_planner/tests.cpp", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T9",
-      "desc": "ratsnest endpoints",
-      "gate": "smoketest",
-      "files": [
-        "global_planner/pns_bridge.cpp",
-        "global_planner/pns_bridge.h",
-        "global_planner/bridge_smoketest.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s10-pattern-routing",
+      "desc": "ROADMAP 3.2: fast first pass with L/Z/monotone pattern paths on the visibility graph for all nets, falling back to full A*/shove only on nets that overflow. Core-side, pairs with pathfinder.h's routeNets(). Add ctest coverage; measure and log a speedup on a synthetic dense case in perf_tests.cpp (do not assert a specific factor, just print it).",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/planner_core.h", "global_planner/planner_core.cpp", "global_planner/pathfinder.h", "global_planner/tests.cpp", "global_planner/perf_tests.cpp", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T12",
-      "desc": "selectable routing mode",
-      "gate": "smoketest",
-      "files": [
-        "global_planner/pns_bridge.cpp",
-        "global_planner/pns_bridge.h",
-        "global_planner/bridge_bindings.cpp",
-        "global_planner/bridge_smoketest.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s11-funnel-taut-path",
+      "desc": "ROADMAP 3.4: string-pulling / funnel post-step on each candidate path to shorten and remove needless corners before handing waypoints to PNS. Core-side, cheap subset of 3.3 (no CDT needed -- just taut-string the existing visibility-graph waypoints). Add ctest coverage comparing corner count / length before vs after on a synthetic obstacle course.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK'",
+      "files": ["global_planner/planner_core.h", "global_planner/planner_core.cpp", "global_planner/tests.cpp", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     },
     {
-      "id": "T11",
-      "desc": "board-level PathFinder loop",
-      "gate": "ctest",
-      "files": [
-        "global_planner/pathfinder.h",
-        "global_planner/pathfinder_tests.cpp"
-      ],
-      "passes": true,
-      "redCount": 0
+      "id": "s12-research-bets-disposition",
+      "desc": "ROADMAP 3.3 (CDT free-space backend), Tier 4 (5.1-5.4 ML: learned net-ordering, congestion prediction, learned A* heuristic, LLM orchestrator), and Tier 5 (adversarial geometry / perf regression / property-fuzz testing infra). These are explicitly 'research bets, once the above is solid' per ROADMAP §7 -- do NOT force a weak implementation. For each of 3.3/5.1/5.2/5.3/5.4/Tier5: either implement it for real (if genuinely tractable in this pass) or write an explicit '-- DEFERRED: <one-line reason>' verdict into ROADMAP.md. The gate's regression check plus a grep confirming every one of {3.3,5.1,5.2,5.3,5.4,Tier 5} has a DONE or DEFERRED marker in ROADMAP.md is the acceptance bar for this story.",
+      "gate": "cd /home/julius/00_projects/kicad-svg-export-plugin/kicad-source-mirror && (cd global_planner/build && ctest --output-on-failure) && (cd kbuild && ninja gplan_bridge_smoketest gplan_kicad) && ./kbuild/qa/tools/pns/gplan_bridge_smoketest | tail -1 | grep -q 'SMOKETEST OK' && ./kbuild/qa/tools/pns/gplan_bridge_smoketest qa/data/pcbnew/issue7325.kicad_pcb | tail -1 | grep -q 'SMOKETEST OK' && grep -qE '3\\.3.*(DONE|DEFERRED)' global_planner/ROADMAP.md && grep -qE '5\\.1.*(DONE|DEFERRED)' global_planner/ROADMAP.md && grep -qE '5\\.2.*(DONE|DEFERRED)' global_planner/ROADMAP.md && grep -qE '5\\.3.*(DONE|DEFERRED)' global_planner/ROADMAP.md && grep -qE '5\\.4.*(DONE|DEFERRED)' global_planner/ROADMAP.md && grep -qiE 'tier 5.*(DONE|DEFERRED)' global_planner/ROADMAP.md",
+      "files": ["global_planner/planner_core.h", "global_planner/planner_core.cpp", "global_planner/ROADMAP.md"],
+      "passes": false, "redCount": 0, "escalated": false, "stallCount": 0, "replans": 0
     }
   ]
 }
