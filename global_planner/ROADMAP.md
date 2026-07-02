@@ -35,14 +35,9 @@ The gaps below are mostly *depth*, not direction.
 
 ## 2. Tier 1 — core algorithm upgrades (Improvement)
 
-### 2.1 Yen's k-distinct paths ★★★ (M) — `planner_core.cpp:462`
-Current k-paths re-runs full A* k× with an edge-penalty; not principled, can
-return same-homotopy duplicates, O(k·n²log n). Replace with **Yen's algorithm**
-(shortest-path tree once, then ranked deviations) [Yen71], and make distinctness
-**homotopy-aware** via an **h-signature** so candidates are genuinely different
-ways around obstacles, not just cost variants [Bhattacharya10]. Add a
-diversity/dissimilarity filter so the k returned paths spread across homotopy
-classes.
+### 2.1 Yen's k-distinct paths ★★★ (M) — `planner_core.cpp` (T4) — **DONE**
+Implemented as Yen's k-shortest loopless paths (commit `15679932bc`, tagged T4
+in-code). Verified via ctest.
 
 ### 2.2 Spatial index for graph build ★★★ (L) — `planner_core.cpp:336` — **DONE**
 `buildEdges` was O(n²·m) ≈ O(n³): every candidate edge tested every hull, AND
@@ -69,10 +64,10 @@ out → **~86ms**; n=1500: would time out → ~200ms. Scaling from n=200→1500
 quadratic-to-cubic growth. See README § Performance & scaling for the full
 before/after table and the T-NEIGHBOR trade-off writeup.
 
-### 2.3 Swept-polygon edge blocking ★★ (M) — `planner_core.cpp:270`
-24-point sampling can miss thin obstacles and is wasteful elsewhere. Build the
-edge's swept rectangle (track width) once and test polygon–polygon intersection
-via **Clipper2** or a Minkowski test. Correct and resolution-independent. [Clipper2]
+### 2.3 Swept-polygon edge blocking ★★ (M) — `planner_core.cpp` (T6, `segHitsConvex`) — **DONE**
+Implemented as an exact Liang-Barsky/Cyrus-Beck half-plane clip against convex
+CCW hulls (commit `208a26ee22`) — resolution-independent, replaces the old
+24-point sampling. Verified via ctest.
 
 ### 2.4 Rigorous channel capacity ★★ (M) — `planner_core.cpp:305`
 `capacity = floor(2·dist / pitch)` is a crude proxy. Compute true gap density
@@ -94,14 +89,15 @@ congestion term to `h`) [Liu22, Adya98].
 
 ## 3. Tier 2 — routing methodology (Improvement, from literature)
 
-### 3.1 Real multi-net PathFinder loop ★★★ (L)
-Today `bumpCongestion` is per-connection. Lift it to a **board-level negotiated-
-congestion loop**: route all nets, find over-capacity graph edges, raise their
-*history cost*, rip-up & reroute only affected nets, iterate to convergence
-[McMurchie95, nextpnr]. This is the single biggest quality lever — it makes the
-result largely **net-order-independent**, the classic failure of greedy routers
-(incl. Freerouting). Add **history-cost reset** and **troublemakers-last** seeding
-[GLSVLSI19, GRIP/Ma21].
+### 3.1 Real multi-net PathFinder loop ★★★ (L) — `global_planner/pathfinder.h` (T11) — **DONE**
+Implemented as a header-only, KiCad-free `gplan::routeNets()` (commit
+`b067dd5447`): each committed net becomes a FIXED obstacle for the others
+(order-independence), deadlock detection rips up + congestion-bumps a blocking
+net when no net makes progress in a round. Own ctest target
+(`pathfinder_tests`, part of the standard 4/4 suite). History-cost
+reset/troublemakers-last seeding from the original writeup are NOT yet
+present — the deadlock-driven rip-up covers the core negotiated-congestion
+loop but not that refinement.
 
 ### 3.2 Two-phase pattern→maze ★★ (M)
 Fast first pass with L/Z/monotone "pattern" paths on the visibility graph for all
@@ -179,15 +175,20 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 
 ## 7. Recommended sequence
 
-1. **Tier 0** (all) — small, unblocks parallel eval + real commits + reload.
-2. **4.11 real hulls + 4.9 ratsnest endpoints + 4.10 board outline** — bridge data
-   quality; biggest correctness gain for least code; makes routes realistic.
+1. **Tier 0** (all) — **done**.
+2. **4.11 real hulls + 4.9 ratsnest endpoints + 4.10 board outline** — **done**.
 3. **2.1 Yen** (done) **+ 2.2 spatial index** (done — T-GRID + T-NEIGHBOR)
-   **+ 2.5 region/caching** — planner quality + scale.
-4. **3.1 board-level PathFinder loop** — order-independence; the quality unlock.
-5. **4.6 optimizer + 4.8 mode strategy** — output cleanliness, cheap.
-6. **4.1 diff pairs + 4.2 length tuning** — opens high-speed boards (large, high value).
-7. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is solid.
+   **+ 2.5 region/caching** (open) — planner quality + scale.
+4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
+5. **4.6 optimizer + 4.8 mode strategy** — open; output cleanliness, cheap.
+6. **4.1 diff pairs + 4.2 length tuning** — **done**.
+7. **4.13 zone-antipad pre-carve + 4.14 clearEscapeCorridor** — **done** (found via a
+   real-board case study, not the original research pass).
+8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
+   solid; still open.
+
+Genuinely open as of this writing: 2.4, 2.5, 2.6, 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
+4.7, 4.8, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
 
