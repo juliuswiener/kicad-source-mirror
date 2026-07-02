@@ -153,7 +153,7 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 |---|---|---|---|---|---|
 | 4.1 | **Differential pairs** | `DIFF_PAIR_PLACER` (pns_diff_pair_placer.h:52), `SetMode(PNS_MODE_ROUTE_DIFF_PAIR)` (pns_router.h:157) | USB/PCIe/LVDS — 30-50% of modern nets; auto-pair detection via `FindDpPrimitivePair` | L | ★★★ |
 | 4.2 | **Length / delay / skew tuning** | `MEANDER_PLACER` / `DP_MEANDER_PLACER` / `MEANDER_SKEW_PLACER`, `PNS_MODE_TUNE_*`; `ROUTER_IFACE::CalculateRoutedPathLength/Delay` (pns_router.h:124) | high-speed timing closure (DDR/clocks) | L | ★★★ |
-| 4.3 | **Per-net class width/clearance** | netclasses already in `BOARD`; thread through bridge | correct constraints per net instead of global params | M | ★★ |
+| 4.3 | **Per-net class width/clearance** — **DONE** (confirmed, no gap) | `PNS_KICAD_IFACE_BASE::ImportSizes` (pns_kicad_iface.cpp:1100), called from every route-creating bridge entry point | correct constraints per net instead of global params | M | ★★ |
 | 4.4 | **Blind/buried vias** | relax adjacency in `planner_core.cpp:368`; config via-connectivity | escape routing on HDI boards (currently through-only adjacent) | M | ★★ |
 | 4.5 | **Multi-terminal / bus / Steiner** — **DONE** | `Planner::planMultiTerminal` (`planner_core.{h,cpp}`) | nets with >2 pads; coordinated bus routing reduces order sensitivity | L | ★★ |
 | 4.6 | **Post-route optimizer pass** — **DONE** | `PnsBridge::optimizeRoute` (`pns_bridge.{h,cpp}`), `OPTIMIZER::Optimize` (pns_optimizer.h:116): MERGE_SEGMENTS+SMART_PADS | 10-20% shorter, cleaner traces | M | ★★ |
@@ -167,6 +167,25 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.14 | **clearEscapeCorridor** — **DONE** | `PnsBridge::clearEscapeCorridor` (`pns_bridge.{h,cpp}`) | automates the manual "probe → find nearest blocker → shove_via/component_search → reprobe" cascade for a fanout-saturated pin escape (RST_N/XVF3800 case study, Wall A); composes existing `routeAndCheck`/`shoveViaSearch`/`shoveComponentSearch`, no new PNS surface | S | ★★ |
 
 (4.11 is listed here too because it's the bridge data-quality fix with the widest downstream effect.)
+
+### 4.3 Per-net class width/clearance ★★ (M) — **DONE** (confirmed, no code gap)
+Every route-creating bridge entry point (`routeAndCheck`, `routeAndCommit`,
+`routeDiffPairAndCommit`, and `routeLongHaul`/`routeWithStrategy` which both
+delegate to `routeAndCommit`) already calls
+`m_iface->ImportSizes( sizes, startItem, startItem->Net(), startPos )` with a
+real seeded `startItem` before routing. `PNS_KICAD_IFACE_BASE::ImportSizes`
+(pns_kicad_iface.cpp:1100) resolves track width, clearance, via
+diameter/drill, and diff-pair width/gap via
+`PNS_PCBNEW_RULE_RESOLVER::QueryConstraint(CT_WIDTH/CT_CLEARANCE/
+CT_VIA_DIAMETER/CT_VIA_HOLE/CT_DIFF_PAIR_GAP, ...)` keyed off `aStartItem`'s
+net — the same DRC/netclass rule engine the interactive router uses, not bare
+board defaults. (The `aNet`/`PNS::NET_HANDLE` parameter `ImportSizes` also
+takes is unused inside the function — net context comes entirely from
+`aStartItem`, which is why every call site above passes a real hovered item,
+not just a net code.) Drag/probe/via-move operations (`dragComponent`,
+`moveVia`, `probeDrag`, `probeViaMove`) correctly do NOT re-import sizes —
+they move existing copper, which already carries its assigned width/clearance
+forward. No gap found; no code change needed.
 
 ### 4.5 Multi-terminal / bus / Steiner ★★ (L) — `planner_core.{h,cpp}` (`planMultiTerminal`) — **DONE**
 `Planner::planMultiTerminal(terminals)` is core-side (KiCad-free), a greedy
