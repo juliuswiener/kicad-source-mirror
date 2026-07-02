@@ -7,6 +7,7 @@
 #include <limits>
 #include <queue>
 #include <set>
+#include <tuple>
 
 namespace gplan {
 
@@ -667,18 +668,24 @@ std::vector<int> Planner::aStar( int src, int dst, const std::vector<double>& mu
 
     auto h = [&]( int i ) { return dist( m_nodes[i].p, m_nodes[dst].p ); };
 
-    using QE = std::pair<double, int>;
+    // T-TIEBREAK (2.6): equal-f entries break ties by HIGHER g (stored negated,
+    // so std::greater picks it). On a visibility graph many nodes share the same
+    // f along an optimal corridor; preferring the deeper node (larger g, hence
+    // smaller remaining h) walks straight to the target instead of expanding the
+    // whole equal-cost front. Node index is a last key for determinism. Carrying
+    // g in the entry also makes the stale-entry check exact (no f - h roundoff).
+    using QE = std::tuple<double, double, int>;   // ( f, -g, node )
     std::priority_queue<QE, std::vector<QE>, std::greater<QE>> pq;
     g[src] = 0.0;
-    pq.push( { h( src ), src } );
+    pq.push( { h( src ), 0.0, src } );
 
     while( !pq.empty() )
     {
-        auto [f, u] = pq.top();
+        auto [f, negG, u] = pq.top();
         pq.pop();
         if( u == dst )
             break;
-        if( f - h( u ) > g[u] + 1e-9 )
+        if( -negG > g[u] + 1e-9 )
             continue;
         for( const Edge& e : m_adj[u] )
         {
@@ -687,7 +694,7 @@ std::vector<int> Planner::aStar( int src, int dst, const std::vector<double>& mu
             {
                 g[e.to] = ng;
                 prev[e.to] = u;
-                pq.push( { ng + h( e.to ), e.to } );
+                pq.push( { ng + h( e.to ), -ng, e.to } );
             }
         }
     }

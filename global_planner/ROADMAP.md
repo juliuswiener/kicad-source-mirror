@@ -91,10 +91,16 @@ latent heap-layout-dependent use-after-free in `PnsBridge::load()` reload
 `JSON_SETTINGS` parent) — fixed via `ClearProject()` before swapping
 `m_settings` (`pns_bridge_load.cpp`).
 
-### 2.6 A* improvements ★ (S–M) — `planner_core.cpp:379`
-Tie-breaking (secondary key) to cut equal-cost expansion; optional **bidirectional
-A*** (≈√ frontier) and a **congestion-aware heuristic** (add a precomputed
-congestion term to `h`) [Liu22, Adya98].
+### 2.6 A* improvements ★ (S–M) — `planner_core.cpp` (T-TIEBREAK) — **DONE**
+Tie-breaking (secondary key) implemented: the `aStar` priority-queue entry is now
+`(f, -g, node)`, so equal-f ties prefer the HIGHER-g (deeper) node — on a
+visibility graph this walks straight down an optimal corridor instead of
+expanding the whole equal-cost front — with node index as a final deterministic
+key; carrying g in the entry also makes the stale-entry check exact (no
+`f - h` roundoff). Verified via ctest + bridge smoketests + ASan/UBSan build.
+**Bidirectional A*** (≈√ frontier) and the **congestion-aware heuristic**
+(precomputed congestion term in `h`) [Liu22, Adya98] are explicitly DEFERRED —
+not implemented this pass.
 
 ---
 
@@ -198,7 +204,7 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
-Genuinely open as of this writing: 2.4, 2.6, 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
+Genuinely open as of this writing: 2.4, 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
 4.7, 4.8, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
