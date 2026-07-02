@@ -191,7 +191,7 @@
         "global_planner/planner_core.cpp",
         "global_planner/ROADMAP.md"
       ],
-      "passes": false,
+      "passes": true,
       "redCount": 0,
       "escalated": false,
       "stallCount": 0,
