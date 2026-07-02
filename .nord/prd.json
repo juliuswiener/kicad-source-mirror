@@ -76,7 +76,7 @@
         "global_planner/README.md",
         "global_planner/ROADMAP.md"
       ],
-      "passes": false,
+      "passes": true,
       "redCount": 0,
       "escalated": false,
       "stallCount": 0,
