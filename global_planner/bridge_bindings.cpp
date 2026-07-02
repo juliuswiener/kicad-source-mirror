@@ -182,6 +182,8 @@ PYBIND11_MODULE( gplan_kicad, m )
               py::arg( "pns_layer" ), py::arg( "target_length_nm" ) )
         .def( "optimize_route", &PnsBridge::optimizeRoute,   // §4.6
               py::arg( "x" ), py::arg( "y" ), py::arg( "pns_layer" ) )
+        .def( "route_with_strategy", &PnsBridge::routeWithStrategy,   // §4.8
+              py::arg( "waypoints" ) )
         .def( "probe_via_move", &PnsBridge::probeViaMove,
               py::arg( "x" ), py::arg( "y" ), py::arg( "new_x" ), py::arg( "new_y" ) )
         .def( "move_via", &PnsBridge::moveVia,

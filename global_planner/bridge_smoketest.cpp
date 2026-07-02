@@ -532,6 +532,41 @@ static int run( int argc, char** argv )
             std::printf( "T9: no net-1 F.Cu pad found; skipping\n" );
     }
 
+    // --- §4.8 routeWithStrategy: automated walkaround->shove fallback pass on
+    // the still-unrouted net 1 left behind by T9 (routeAndCheck never commits).
+    {
+        VECTOR2I padP; bool haveStart = false;
+        for( FOOTPRINT* fp : board->Footprints() )
+        {
+            for( PAD* pad : fp->Pads() )
+                if( pad->GetNetCode() == 1 && pad->IsOnLayer( F_Cu ) )
+                { padP = pad->GetPosition(); haveStart = true; break; }
+            if( haveStart ) break;
+        }
+
+        if( haveStart )
+        {
+            auto tgt = br.nearestUnconnected( padP.x, padP.y, fcu );
+            if( !tgt )
+            { std::printf( "T-STRATEGY FAIL: no ratsnest target on unrouted net\n" ); return 1; }
+
+            std::vector<gplan::Waypoint> wp = {
+                { { (double) padP.x, (double) padP.y }, fcu }, *tgt };
+
+            gbridge::RouteChange s = br.routeWithStrategy( wp );
+            std::printf( "routeWithStrategy: ok=%d placed=%d reached=%d collided=%d net=%d "
+                         "added=%zu mod=%zu removed=%zu vias=%d\n",
+                         s.ok, s.placed, s.reached, s.collided, s.netcode, s.addedSegs.size(),
+                         s.modSegUuids.size(), s.removedUuids.size(), s.vias );
+            if( !s.ok )
+            { std::printf( "T-STRATEGY FAIL: neither walkaround nor shove reached target\n" ); return 1; }
+            std::printf( "T-STRATEGY OK (reached, %zu added segs, %zu vias)\n",
+                         s.addedSegs.size(), s.vias );
+        }
+        else
+            std::printf( "T-STRATEGY: no net-1 F.Cu pad found; skipping\n" );
+    }
+
     // --- T10-RELOAD: PnsBridge::load() re-callable in the same process on a
     // DIFFERENT board (0.5 — verifies attach()'s cleanup()-first re-entrancy
     // actually holds at the load()-convenience-API level, not just attach()).

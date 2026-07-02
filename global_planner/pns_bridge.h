@@ -304,6 +304,15 @@ public:
     // (ok=false) if the optimizer finds no improvement or the result collides.
     OptimizeResult optimizeRoute( double x, double y, int pnsLayer );
 
+    // §4.8 — automated multi-pass mode strategy. Tries RM_Walkaround first (the
+    // polite pass: routes around obstacles without shoving existing copper),
+    // and only if that fails to reach the target, retries the SAME waypoints
+    // once with RM_Shove (the aggressive fallback). The bridge's configured
+    // mode (setMode) is restored on every exit path, mirroring the placer-mode
+    // restore already used by routeDiffPairAndCommit — a caller's setMode()
+    // choice survives a routeWithStrategy() call unchanged.
+    RouteChange routeWithStrategy( const std::vector<gplan::Waypoint>& waypoints );
+
     // T-CORRIDOR — automate the manual cascade-clearing pattern (relocate the
     // nearest blocker, retry, repeat) for a fanout-saturated escape: probe a
     // straight line from (x,y,pnsLayer) toward (x+dirX*radius, y+dirY*radius);

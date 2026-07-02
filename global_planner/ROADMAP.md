@@ -154,7 +154,7 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.5 | **Multi-terminal / bus / Steiner** — **DONE** | `Planner::planMultiTerminal` (`planner_core.{h,cpp}`) | nets with >2 pads; coordinated bus routing reduces order sensitivity | L | ★★ |
 | 4.6 | **Post-route optimizer pass** — **DONE** | `PnsBridge::optimizeRoute` (`pns_bridge.{h,cpp}`), `OPTIMIZER::Optimize` (pns_optimizer.h:116): MERGE_SEGMENTS+SMART_PADS | 10-20% shorter, cleaner traces | M | ★★ |
 | 4.7 | **Dragging / fixup pass** | `DRAGGER`/`MULTI_DRAGGER`/`COMPONENT_DRAGGER`, `StartDragging(...,DM_*)` (pns_router.h:208) | density recovery without full re-route | M | ★ |
-| 4.8 | **Mode strategy (walkaround→shove)** | `ROUTING_SETTINGS` (pns_routing_settings.h): RM_Walkaround/RM_Shove, ShoveVias, JumpOver, free-angle, corner mode | multi-pass: polite first, shove second | S | ★★ |
+| 4.8 | **Mode strategy (walkaround→shove)** — **DONE** | `PnsBridge::routeWithStrategy` (`pns_bridge.{h,cpp}`): `ROUTING_SETTINGS` RM_Walkaround/RM_Shove via `setMode` | multi-pass: polite first, shove second | S | ★★ |
 | 4.9 | **Ratsnest-driven endpoints** | `GetNearestRatnestAnchor` (pns_router.h:247), `TOPOLOGY::NearestUnconnectedAnchorPoint` (pns_topology.h:63) | pick the *unrouted* ends automatically (fixes our placed=0 case) | M | ★★ |
 | 4.10 | **Board outline** — **DONE** | `board->GetBoardPolygonOutlines()` (T8, `pns_bridge.cpp` `getObstacles`) | thin FIXED wall around the board edge on every layer so the planner never proposes off-board routes | S | ★★ |
 | 4.11 | **Real `Hull()` not bbox** — **DONE** | `pad->GetEffectivePolygon(bl)` (T7) for pads; `zone->Outline()` (this pass) for keepout zones — both replace `bboxPoly`. Only vias still use bbox (acceptable: near-circular already) | tighter packing; less false congestion | M | ★★★ |
@@ -197,6 +197,20 @@ block that routes+commits a real net, optimizes at a committed-segment
 midpoint, and prints length before/after (improvement is board-dependent, not
 asserted; found+collision-free is).
 
+### 4.8 Mode strategy (walkaround→shove) ★★ (S) — `pns_bridge.{h,cpp}` (`routeWithStrategy`) — **DONE**
+`setMode`/`RouteMode` (walkaround/shove/mark-obstacles) already existed (T12)
+as manual primitives; there was no automated multi-pass STRATEGY.
+`PnsBridge::routeWithStrategy(waypoints)` tries the SAME waypoints under
+RM_Walkaround first (polite — never shoves existing copper) via the ordinary
+`routeAndCommit`, and only if that pass fails to reach the target, retries
+once under RM_Shove (the aggressive fallback). `routeAndCommit` only commits a
+reached+collision-free result, so a failed walkaround pass leaves the world
+clean for the shove retry. The bridge's configured mode is restored on every
+exit path, mirroring the placer-mode restore already used by
+`routeDiffPairAndCommit`. Python: `route_with_strategy`. Verified via a
+bridge_smoketest block that un-routes net 1 (T9's pattern), then routes it
+through `routeWithStrategy` and asserts the commit reaches the target.
+
 ---
 
 ## 5. Tier 4 — ML, selectively (Expansion)
@@ -235,7 +249,7 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
    **+ 2.5 region/caching** (done — T-CACHE + T-REGION) — planner quality + scale.
 4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
 5. **4.5 multi-terminal** — **done** (`planMultiTerminal`); **4.6 optimizer** — **done**
-   (`optimizeRoute`); **4.8 mode strategy** — open; output cleanliness, cheap.
+   (`optimizeRoute`); **4.8 mode strategy** — **done** (`routeWithStrategy`).
 6. **4.1 diff pairs + 4.2 length tuning** — **done**.
 7. **4.13 zone-antipad pre-carve + 4.14 clearEscapeCorridor** — **done** (found via a
    real-board case study, not the original research pass).
@@ -243,7 +257,7 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
    solid; still open.
 
 Genuinely open as of this writing: 3.2, 3.3, 3.4, 4.3,
-4.7, 4.8, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
+4.7, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
 

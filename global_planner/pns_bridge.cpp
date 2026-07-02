@@ -1262,6 +1262,31 @@ OptimizeResult PnsBridge::optimizeRoute( double x, double y, int pnsLayer )
 }
 
 // ---------------------------------------------------------------------------
+// §4.8 — automated multi-pass mode strategy: try RM_Walkaround first (polite,
+// never shoves existing copper), fall back to RM_Shove only if walkaround
+// couldn't reach the target. Both passes go through the ordinary
+// routeAndCommit — a failed walkaround pass never commits (routeAndCommit
+// only persists a reached+collision-free result), so the shove retry starts
+// from the same clean world the walkaround pass did.
+// ---------------------------------------------------------------------------
+RouteChange PnsBridge::routeWithStrategy( const std::vector<gplan::Waypoint>& wps )
+{
+    RouteMode saved = m_mode;
+
+    setMode( RouteMode::Walkaround );
+    RouteChange rc = routeAndCommit( wps );
+
+    if( !rc.ok )
+    {
+        setMode( RouteMode::Shove );
+        rc = routeAndCommit( wps );
+    }
+
+    setMode( saved );
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
 // T-VIA — relocate a single via (PNS DM_VIA drag). Mirrors dragComponent/
 // probeDrag exactly, seeded on the VIA_T item instead of a pad (SOLID_T).
 // ---------------------------------------------------------------------------
