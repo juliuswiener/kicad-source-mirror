@@ -176,7 +176,7 @@
         "global_planner/tests.cpp",
         "global_planner/ROADMAP.md"
       ],
-      "passes": false,
+      "passes": true,
       "redCount": 0,
       "escalated": false,
       "stallCount": 0,
