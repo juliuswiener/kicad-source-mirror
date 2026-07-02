@@ -140,6 +140,14 @@ private:
     bool  insideAnyBlock( Point p, int sp ) const;
     std::vector<int> aStar( int src, int dst, const std::vector<double>& mul ) const;
 
+    // ROADMAP 3.2 — cheap direct/L-shape fast-first-pass, tried in plan()
+    // right before Yen's k-shortest search. Same-layer, non-degenerate calls
+    // only; a fully-clear shape's own segment lengths are a cost floor no
+    // longer/more-cornered graph path can beat, so it is returned immediately.
+    // Blocked or cross-layer calls return false and fall through to the full
+    // corner-graph search unchanged.
+    bool   tryPatternPath( Point start, int sL, Point target, int tL, Path& out ) const;
+
     double edgeWeight( Point a, Point b, int layer ) const;
     bool   edgeBlocked( Point a, Point b, int layer ) const;
     bool   viaSiteClear( Point p, int layer ) const;

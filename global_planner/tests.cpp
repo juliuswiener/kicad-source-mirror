@@ -363,6 +363,38 @@ int main()
                "T-MULTI: fewer than 2 terminals returns no paths" );
     }
 
+    // T-PATTERN (ROADMAP 3.2): direct/L-shape fast-first-pass tried before
+    // Yen's k-shortest search.
+    {
+        // A: direct diagonal blocked, both L-corners clear -> pattern still
+        // fires, returning a 3-waypoint L path (not a full aStar route).
+        std::vector<Obstacle> obs = { { box( 5, 5, 4, 4 ), true, 0 } };
+        Planner pl( obs, base );
+        auto paths = pl.plan( { 0, 0 }, { 10, 10 } );
+        CHECK( !paths.empty(), "T-PATTERN: L-shape around a diagonal block" );
+        CHECK( paths.front().waypoints.size() == 3,
+               "T-PATTERN: pattern L-shape is a single corner, not a full aStar route" );
+        CHECK( pathClears( paths.front(), obs, margin ),
+               "T-PATTERN: pattern L-shape clears the obstacle by margin" );
+    }
+    {
+        // B: direct AND both L-corners blocked -> pattern must decline and
+        // fall through to the full corner-graph search, which still finds a
+        // route around every obstacle.
+        std::vector<Obstacle> obs = {
+            { box( 5, 5, 3, 3 ), true, 0 },     // blocks the direct diagonal
+            { box( 8, 0, 3, 2 ), true, 0 },     // blocks leg (0,0)->(10,0)
+            { box( 0, 8, 2, 3 ), true, 0 },     // blocks leg (0,0)->(0,10)
+        };
+        Planner pl( obs, base );
+        auto paths = pl.plan( { 0, 0 }, { 10, 10 } );
+        CHECK( !paths.empty(), "T-PATTERN: fallback to full search when every shape is blocked" );
+        bool anyClears = false;
+        for( const Path& p : paths )
+            if( pathClears( p, obs, margin ) ) anyClears = true;
+        CHECK( anyClears, "T-PATTERN: fallback route clears every obstacle by margin" );
+    }
+
     std::printf( "\n%d passed, %d failed\n", g_pass, g_fail );
     return g_fail ? 1 : 0;
 }

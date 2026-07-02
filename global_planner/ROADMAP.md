@@ -120,10 +120,32 @@ reset/troublemakers-last seeding from the original writeup are NOT yet
 present — the deadlock-driven rip-up covers the core negotiated-congestion
 loop but not that refinement.
 
-### 3.2 Two-phase pattern→maze ★★ (M)
-Fast first pass with L/Z/monotone "pattern" paths on the visibility graph for all
-nets; fall back to full A*/shove only on nets that overflow [FastRoute]. Big
-speedup on dense boards.
+### 3.2 Two-phase pattern→maze ★★ (M) — `planner_core.{h,cpp}` (`Planner::tryPatternPath`) — **DONE**
+`plan()` now tries three cheap shapes — direct line, and the two axis-aligned
+L-corners — via the SAME `edgeBlocked`/`edgeWeight` primitives the full corner
+graph uses, right before Yen's k-shortest search. Same-layer, non-degenerate
+calls only (a via/layer-change candidate falls straight through to the full
+pipeline, as does any call where every shape is blocked). When a shape is
+fully clear, its own segment lengths are a cost floor no longer/more-cornered
+graph path can beat, so `plan()` returns it immediately as the single best
+path and skips Yen's search entirely for that call — the corner-graph
+cache/build (2.5, `graphBuildCount()`) is untouched either way, so this only
+ever shortens the SEARCH, never changes cache semantics. Like 2.4's capacity
+proxy, this is a speed heuristic (PNS remains ground truth) — a fully-clear
+pattern forgoes the OTHER k-path homotopies for that call, trading route
+diversity for speed on the (dense-board-common) case where the direct/L-shape
+corridor is already open. Verified via ctest (`T-PATTERN`: an L-shape found
+when the direct diagonal is blocked but both corners are clear; correct
+fallback to the full corner-graph search when every shape is blocked) +
+`perf_tests` (`T-PATTERN` block: same N=885 dense obstacle field, corridor
+threading the gap between two obstacle rows vs. a query straight through the
+field — ~1.3x faster per `plan()` call, reported not gated since the absolute
+number is environment-sensitive) + bridge smoketests on both fixtures.
+**Monotone-staircase patterns and per-net overflow-triggered fallback** (the
+original literature's two-phase *global* routing loop, [FastRoute]) are
+explicitly DEFERRED — this pass adds the fast-first-pass primitive to the
+core `plan()` call itself, not a `pathfinder.h`/`routeNets()`-level batch
+phase split.
 
 ### 3.3 CDT free-space backend (alt graph) ★★★ (L) — research bet — **DEFERRED**
 Replace/augment the inflated-corner visibility graph with a **constrained Delaunay
@@ -282,7 +304,9 @@ into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
 1. **Tier 0** (all) — **done**.
 2. **4.11 real hulls + 4.9 ratsnest endpoints + 4.10 board outline** — **done**.
 3. **2.1 Yen** (done) **+ 2.2 spatial index** (done — T-GRID + T-NEIGHBOR)
-   **+ 2.5 region/caching** (done — T-CACHE + T-REGION) — planner quality + scale.
+   **+ 2.5 region/caching** (done — T-CACHE + T-REGION)
+   **+ 3.2 pattern-path fast-first-pass** (done — `tryPatternPath`) — planner
+   quality + scale.
 4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
 5. **4.5 multi-terminal** — **done** (`planMultiTerminal`); **4.6 optimizer** — **done**
    (`optimizeRoute`); **4.8 mode strategy** — **done** (`routeWithStrategy`).
@@ -292,7 +316,7 @@ into standalone adversarial/perf/fuzz suites once the feature set stabilizes.
 8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
-Genuinely open as of this writing: 3.2, 3.3, 3.4, 4.3,
+Genuinely open as of this writing: 3.3, 3.4,
 4.7, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---

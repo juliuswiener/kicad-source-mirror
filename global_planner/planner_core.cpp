@@ -744,6 +744,51 @@ std::vector<Waypoint> simplify( const std::vector<Waypoint>& wps )
 
 } // anonymous namespace
 
+bool Planner::tryPatternPath( Point start, int sL, Point target, int tL, Path& out ) const
+{
+    if( sL != tL || dist( start, target ) < 1e-9 )
+        return false;                        // vias / degenerate calls: full pipeline only
+
+    // Three cheap shapes: direct line, and the two axis-aligned L-corners.
+    // When start/target are collinear on one axis, both corners degenerate
+    // to an existing endpoint (skipped below) and this reduces to just the
+    // direct-line test.
+    const std::vector<std::vector<Point>> candidates = {
+        { start, target },
+        { start, { target.x, start.y }, target },
+        { start, { start.x, target.y }, target },
+    };
+
+    double bestCost = std::numeric_limits<double>::max();
+    const std::vector<Point>* best = nullptr;
+
+    for( const std::vector<Point>& c : candidates )
+    {
+        bool   clear = true;
+        double cost  = 0.0;
+        for( size_t i = 0; i + 1 < c.size(); ++i )
+        {
+            if( dist( c[i], c[i + 1] ) < 1e-9 )
+                continue;                     // degenerate corner (endpoint reuse)
+            if( edgeBlocked( c[i], c[i + 1], sL ) )
+            { clear = false; break; }
+            cost += edgeWeight( c[i], c[i + 1], sL );
+        }
+        if( clear && cost < bestCost )
+        { bestCost = cost; best = &c; }
+    }
+
+    if( !best )
+        return false;
+
+    std::vector<Waypoint> raw;
+    for( const Point& p : *best )
+        raw.push_back( { p, sL } );
+    out.waypoints = simplify( raw );
+    out.cost      = bestCost;
+    return true;
+}
+
 std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
 {
     std::lock_guard<std::mutex> lk( m_mutex );   // T1: guards graph rebuild + m_bumps
@@ -811,6 +856,21 @@ std::vector<Path> Planner::plan( Point start, int sL, Point target, int tL )
         Path p;
         p.waypoints = { { start, sL } };
         result.push_back( p );
+        return result;
+    }
+
+    // ROADMAP 3.2 — T-PATTERN: cheap direct/L-shape fast-first-pass, tried
+    // before the (much more expensive) Yen's k-shortest search below. Reuses
+    // the exact same edgeBlocked/edgeWeight primitives as the full graph, so
+    // its cost is directly comparable to a graph edge's cost. Only replaces
+    // the k-path SEARCH, not the corner-graph cache above — graphBuildCount()
+    // semantics are unaffected. A fully-clear pattern forgoes the other
+    // k-path homotopies (this is a speed heuristic, like 2.4's capacity
+    // proxy — PNS remains ground truth).
+    Path patternPath;
+    if( tryPatternPath( start, sL, target, tL, patternPath ) )
+    {
+        result.push_back( std::move( patternPath ) );
         return result;
     }
 
