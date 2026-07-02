@@ -935,4 +935,46 @@ std::vector<Path> Planner::plan( Point start, Point target, const BBox& region )
     return plan( start, l, target, l, region );
 }
 
+std::vector<Path> Planner::planMultiTerminal( const std::vector<Waypoint>& terminals )
+{
+    std::vector<Path> tree;
+    if( terminals.size() < 2 )
+        return tree;
+
+    std::vector<Waypoint> connected = { terminals.front() };
+    std::vector<Waypoint> remaining( terminals.begin() + 1, terminals.end() );
+
+    while( !remaining.empty() )
+    {
+        double bestCost = -1.0;
+        size_t bestRemaining = 0;
+        Path   bestPath;
+
+        for( size_t r = 0; r < remaining.size(); ++r )
+        {
+            for( const Waypoint& c : connected )
+            {
+                std::vector<Path> cand = plan( c.p, c.layer, remaining[r].p, remaining[r].layer );
+                if( cand.empty() )
+                    continue;
+                if( bestCost < 0.0 || cand.front().cost < bestCost )
+                {
+                    bestCost      = cand.front().cost;
+                    bestRemaining = r;
+                    bestPath      = std::move( cand.front() );
+                }
+            }
+        }
+
+        if( bestCost < 0.0 )   // no remaining terminal reachable from the tree so far
+            break;
+
+        tree.push_back( std::move( bestPath ) );
+        connected.push_back( remaining[bestRemaining] );
+        remaining.erase( remaining.begin() + bestRemaining );
+    }
+
+    return tree;
+}
+
 } // namespace gplan

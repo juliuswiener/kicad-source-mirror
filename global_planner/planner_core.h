@@ -103,6 +103,16 @@ public:
                             const BBox& region );
     std::vector<Path> plan( Point start, Point target, const BBox& region );
 
+    // ROADMAP 4.5 — multi-terminal / bus routing. Greedy Steiner-tree
+    // heuristic: starting from terminals[0], repeatedly connects the
+    // cheapest (unconnected terminal, already-connected point) pair via
+    // plan(), so the terminal INPUT ORDER doesn't bias which pairs get
+    // routed (unlike routing terminals as a fixed start->t1->t2->... chain).
+    // Returns one Path per newly-connected terminal (size == terminals.size()
+    // - 1 when every terminal is reachable from the rest; fewer entries if
+    // some terminal has no path to any other). Needs >= 2 terminals.
+    std::vector<Path> planMultiTerminal( const std::vector<Waypoint>& terminals );
+
     // T-REGION (2.5): only obstacle corners inside `region` become graph nodes
     // (start/target are always kept). Setting a DIFFERENT region invalidates the
     // cached graph; re-setting the same region is a no-op (cache stays warm).

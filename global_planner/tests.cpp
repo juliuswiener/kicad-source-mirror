@@ -331,6 +331,38 @@ int main()
         CHECK( pl.graphBuildCount() == 5, "2.5: clearRegion invalidates the cache" );
     }
 
+    // T-MULTI (ROADMAP 4.5): multi-terminal / bus routing. The greedy
+    // Steiner-tree connects terminals by actual path cost, not input order --
+    // permuting the terminal list must not change the total tree cost (only
+    // which paths are returned), unlike a naive start->t1->t2->... chain.
+    {
+        std::vector<Obstacle> obs;   // open field: isolates ordering effects from routing detail
+        Planner pl( obs, base );
+
+        Waypoint A{ { 0, 0 }, 0 }, B{ { 1, 0 }, 0 }, C{ { 100, 0 }, 0 }, D{ { 2, 0 }, 0 };
+
+        auto sumCost = []( const std::vector<Path>& tree )
+        {
+            double s = 0.0;
+            for( const Path& p : tree ) s += p.cost;
+            return s;
+        };
+
+        auto tree1 = pl.planMultiTerminal( { A, C, B, D } );   // deliberately bad input order
+        auto tree2 = pl.planMultiTerminal( { B, D, A, C } );   // different start + order
+
+        CHECK( tree1.size() == 3, "T-MULTI: n-1 paths for 4 terminals" );
+        CHECK( tree2.size() == 3, "T-MULTI: n-1 paths regardless of input order" );
+        for( const Path& p : tree1 )
+            CHECK( !p.waypoints.empty(), "T-MULTI: every connection is a real path" );
+
+        CHECK( std::fabs( sumCost( tree1 ) - sumCost( tree2 ) ) < 1e-6,
+               "T-MULTI: total tree cost is order-independent (greedy picks by cost, not input order)" );
+
+        CHECK( pl.planMultiTerminal( { A } ).empty(),
+               "T-MULTI: fewer than 2 terminals returns no paths" );
+    }
+
     std::printf( "\n%d passed, %d failed\n", g_pass, g_fail );
     return g_fail ? 1 : 0;
 }

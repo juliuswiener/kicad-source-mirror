@@ -151,7 +151,7 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.2 | **Length / delay / skew tuning** | `MEANDER_PLACER` / `DP_MEANDER_PLACER` / `MEANDER_SKEW_PLACER`, `PNS_MODE_TUNE_*`; `ROUTER_IFACE::CalculateRoutedPathLength/Delay` (pns_router.h:124) | high-speed timing closure (DDR/clocks) | L | ★★★ |
 | 4.3 | **Per-net class width/clearance** | netclasses already in `BOARD`; thread through bridge | correct constraints per net instead of global params | M | ★★ |
 | 4.4 | **Blind/buried vias** | relax adjacency in `planner_core.cpp:368`; config via-connectivity | escape routing on HDI boards (currently through-only adjacent) | M | ★★ |
-| 4.5 | **Multi-terminal / bus / Steiner** | `plan(vector<targets>)`; `SHOVE::AddHeads`/`ShoveMultiLines` (pns_shove.h:80) | nets with >2 pads; coordinated bus routing reduces order sensitivity | L | ★★ |
+| 4.5 | **Multi-terminal / bus / Steiner** — **DONE** | `Planner::planMultiTerminal` (`planner_core.{h,cpp}`) | nets with >2 pads; coordinated bus routing reduces order sensitivity | L | ★★ |
 | 4.6 | **Post-route optimizer pass** — **DONE** | `PnsBridge::optimizeRoute` (`pns_bridge.{h,cpp}`), `OPTIMIZER::Optimize` (pns_optimizer.h:116): MERGE_SEGMENTS+SMART_PADS | 10-20% shorter, cleaner traces | M | ★★ |
 | 4.7 | **Dragging / fixup pass** | `DRAGGER`/`MULTI_DRAGGER`/`COMPONENT_DRAGGER`, `StartDragging(...,DM_*)` (pns_router.h:208) | density recovery without full re-route | M | ★ |
 | 4.8 | **Mode strategy (walkaround→shove)** | `ROUTING_SETTINGS` (pns_routing_settings.h): RM_Walkaround/RM_Shove, ShoveVias, JumpOver, free-angle, corner mode | multi-pass: polite first, shove second | S | ★★ |
@@ -163,6 +163,23 @@ The bridge uses ~5% of PNS. High-value capabilities already implemented in
 | 4.14 | **clearEscapeCorridor** — **DONE** | `PnsBridge::clearEscapeCorridor` (`pns_bridge.{h,cpp}`) | automates the manual "probe → find nearest blocker → shove_via/component_search → reprobe" cascade for a fanout-saturated pin escape (RST_N/XVF3800 case study, Wall A); composes existing `routeAndCheck`/`shoveViaSearch`/`shoveComponentSearch`, no new PNS surface | S | ★★ |
 
 (4.11 is listed here too because it's the bridge data-quality fix with the widest downstream effect.)
+
+### 4.5 Multi-terminal / bus / Steiner ★★ (L) — `planner_core.{h,cpp}` (`planMultiTerminal`) — **DONE**
+`Planner::planMultiTerminal(terminals)` is core-side (KiCad-free), a greedy
+Steiner-tree heuristic over the existing point-to-point `plan()`: starting
+from `terminals[0]`, it repeatedly connects the cheapest (unconnected
+terminal, already-connected point) pair, growing a tree one edge at a time
+(Prim's-algorithm structure, reusing `plan()` as the edge-cost oracle instead
+of a new graph primitive). This is what "reduces order sensitivity" means in
+practice: on a graph with distinct edge costs the resulting tree — and its
+total cost — is the same regardless of which permutation of terminals is
+passed in, unlike routing a caller-supplied chain start->t1->t2->... where a
+badly-ordered chain pays for detours a cost-driven choice would avoid.
+Returns one `Path` per newly-connected terminal (`terminals.size() - 1` on
+success). Verified by `T-MULTI` in `tests.cpp`: two different permutations of
+the same 4-terminal set (one deliberately bad) produce the same total tree
+cost. `SHOVE::AddHeads`/`ShoveMultiLines` (bridge-side coordinated multi-line
+shove) remains open — this closes the core-side planning gap only.
 
 ### 4.6 Post-route optimizer pass ★★ (M) — `pns_bridge.{h,cpp}` (`optimizeRoute`) — **DONE**
 `PnsBridge::optimizeRoute(x, y, pnsLayer)` assembles the joint-to-joint LINE
@@ -217,14 +234,15 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 3. **2.1 Yen** (done) **+ 2.2 spatial index** (done — T-GRID + T-NEIGHBOR)
    **+ 2.5 region/caching** (done — T-CACHE + T-REGION) — planner quality + scale.
 4. **3.1 board-level PathFinder loop** — **done** (`pathfinder.h`, T11).
-5. **4.6 optimizer** — **done** (`optimizeRoute`); **4.8 mode strategy** — open; output cleanliness, cheap.
+5. **4.5 multi-terminal** — **done** (`planMultiTerminal`); **4.6 optimizer** — **done**
+   (`optimizeRoute`); **4.8 mode strategy** — open; output cleanliness, cheap.
 6. **4.1 diff pairs + 4.2 length tuning** — **done**.
 7. **4.13 zone-antipad pre-carve + 4.14 clearEscapeCorridor** — **done** (found via a
    real-board case study, not the original research pass).
 8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
-Genuinely open as of this writing: 3.2, 3.3, 3.4, 4.3, 4.5,
+Genuinely open as of this writing: 3.2, 3.3, 3.4, 4.3,
 4.7, 4.8, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
