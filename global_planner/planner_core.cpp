@@ -516,7 +516,12 @@ double Planner::edgeWeight( Point a, Point b, int layer ) const
     // cell and doubles until it finds candidates — exact same result as the
     // old unbounded linear scan, just without touching every one of the m
     // hulls when the nearby ones already answer it.
-    double dFix = std::numeric_limits<double>::max();
+    // Corridor width (§2.4): nearest fixed obstacle on EACH side of the a->b
+    // line, so `gap` is the width of the channel between the two bounding
+    // obstacles instead of 2x the single nearest one. Side is judged by the
+    // obstacle's bbox center — a heuristic for congestion ranking only.
+    double dSide[2] = { std::numeric_limits<double>::max(),
+                        std::numeric_limits<double>::max() };
     {
         double r = std::max( pitch, ld.fixedGrid.cell );
         for( int ring = 0; ring < 12; ++ring )
@@ -529,18 +534,26 @@ double Planner::edgeWeight( Point a, Point b, int layer ) const
                 break;                                  // whole grid is one cell; no point growing
             r *= 2;
         }
+        const double ex = b.x - a.x, ey = b.y - a.y;
         for( int i : m_queryBuf )
         {
-            const AABB& bx = ld.fixedOrigBox[i];                    // T5: prune if box can't beat dFix
-            if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) >= dFix )
-                continue;
-            dFix = std::min( dFix, distSegPolygon( a, b, ld.fixedOrig[i] ) );
+            const AABB& bx = ld.fixedOrigBox[i];
+            double cross = ex * ( ( bx.y0 + bx.y1 ) * 0.5 - a.y )
+                         - ey * ( ( bx.x0 + bx.x1 ) * 0.5 - a.x );
+            int side = ( cross >= 0.0 ) ? 0 : 1;
+            if( aabbDist( sx0, sy0, sx1, sy1, bx.x0, bx.y0, bx.x1, bx.y1 ) >= dSide[side] )
+                continue;                                           // T5: prune per side
+            dSide[side] = std::min( dSide[side], distSegPolygon( a, b, ld.fixedOrig[i] ) );
         }
     }
-    if( dFix == std::numeric_limits<double>::max() )
-        dFix = 10.0 * pitch;
+    // Empty side -> open field there; same 10*pitch cap the old code used
+    // when nothing was found at all (capacity beyond ~10 tracks is moot).
+    for( double& d : dSide )
+        if( d == std::numeric_limits<double>::max() )
+            d = 10.0 * pitch;
 
-    double gap      = 2.0 * dFix;
+    double dFix     = std::min( dSide[0], dSide[1] );
+    double gap      = dSide[0] + dSide[1];
     double capacity = std::max( 1.0, std::floor( gap / pitch ) );
 
     double usage = 0.0;

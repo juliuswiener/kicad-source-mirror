@@ -69,11 +69,15 @@ Implemented as an exact Liang-Barsky/Cyrus-Beck half-plane clip against convex
 CCW hulls (commit `208a26ee22`) — resolution-independent, replaces the old
 24-point sampling. Verified via ctest.
 
-### 2.4 Rigorous channel capacity ★★ (M) — `planner_core.cpp:305`
-`capacity = floor(2·dist / pitch)` is a crude proxy. Compute true gap density
-between the two bounding fixed obstacles (geometric corridor width / max-flow on
-the channel) [Cheng05]. Sharpens congestion ranking; still a heuristic (PNS is
-ground truth).
+### 2.4 Rigorous channel capacity ★★ (M) — `planner_core.cpp` (`edgeWeight`) — **DONE**
+`edgeWeight` now computes a geometric corridor width: the nearest fixed
+obstacle on EACH side of the a→b line (side judged by obstacle bbox center,
+reusing the existing ring-doubling `fixedGrid` query with a per-side T5 prune),
+so `gap = dLeft + dRight` instead of the old `2·dFix` single-obstacle proxy; an
+empty side falls back to the old 10·pitch cap. Still `capacity =
+floor(gap/pitch)` and still a congestion-RANKING heuristic (PNS is ground
+truth); `dFix = min(dLeft, dRight)` keeps the tightness term unchanged.
+Verified via ctest + both bridge smoketests + ASan/UBSan build.
 
 ### 2.5 Region culling + per-plan caching ★★ (M) — `planner_core.cpp` (T-CACHE/T-REGION) — **DONE**
 `plan()` now splits the graph into a cached corner-only part (inflated-hull
@@ -204,7 +208,7 @@ Train data is free: log your own router's successes/failures (4.12) and learn fr
 8. **3.3 CDT backend** and **5.1/5.2 ML guides** — research bets once the above is
    solid; still open.
 
-Genuinely open as of this writing: 2.4, 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
+Genuinely open as of this writing: 3.2, 3.3, 3.4, 4.3, 4.5, 4.6,
 4.7, 4.8, 4.12, all of Tier 4 (ML), Tier 5 (testing/infra hardening).
 
 ---
