@@ -90,7 +90,7 @@
         "global_planner/pns_bridge.cpp",
         "global_planner/ROADMAP.md"
       ],
-      "passes": false,
+      "passes": true,
       "redCount": 0,
       "escalated": false,
       "stallCount": 0,
