@@ -150,19 +150,19 @@ static int run( int argc, char** argv )
         via->SetPosition( VECTOR2I( x, y ) );
         via->SetDrill( drill );
         via->SetWidth( dia );
-        via->SetLayerPair( top, bot );
         via->SetNet( net );
 
-        // The ctor defaults to VIATYPE::THROUGH regardless of the layer span
-        // set above; PNS (pns_kicad_iface.cpp) branches on GetViaType() ==
-        // BLIND/BURIED to decide per-layer behaviour, so a THROUGH-flagged
-        // via with a partial span is treated as an inconsistent/invalid
-        // through via. Derive the real type from the span instead (order-
-        // independent: caller may pass top/bottom in either order).
+        // SetViaType() MUST run before SetLayerPair(): PCB_VIA::SanitizeLayers()
+        // (called by SetLayerPair) forces the drill span back to F_Cu/B_Cu
+        // whenever GetViaType() == THROUGH, which is the ctor default. Setting
+        // the type first, then the span, means the span sticks (order-
+        // independent on the top/bottom args here since either may be passed
+        // as the nominal "top").
         bool spansFullStack = ( top == F_Cu && bot == B_Cu ) || ( top == B_Cu && bot == F_Cu );
         bool touchesOuter = top == F_Cu || top == B_Cu || bot == F_Cu || bot == B_Cu;
         if( !spansFullStack )
             via->SetViaType( touchesOuter ? VIATYPE::BLIND : VIATYPE::BURIED );
+        via->SetLayerPair( top, bot );
         board->Add( via.release(), ADD_MODE::INSERT );
         std::printf( "candidate via added at (%lld,%lld) net=%s %s->%s\n",
                      x, y, (const char*) netName.utf8_str(),
