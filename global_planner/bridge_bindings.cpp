@@ -153,6 +153,14 @@ PYBIND11_MODULE( gplan_kicad, m )
                   bool ok = self.load( p, &err );
                   return py::make_tuple( ok, err );
               }, py::arg( "pcb_path" ) )
+        // Mirrors load_ex()'s (ok, error_detail) shape so callers can tell a
+        // write failure from "nothing loaded" without exceptions.
+        .def( "save", []( PnsBridge& self, const std::string& p )
+              {
+                  std::string err;
+                  bool ok = self.save( p, &err );
+                  return py::make_tuple( ok, err );
+              }, py::arg( "pcb_path" ) )
         .def( "cleanup", &PnsBridge::cleanup )                // T10
         .def( "set_mode", &PnsBridge::setMode, py::arg( "mode" ) )   // T12
         .def( "pns_layer", &PnsBridge::pnsLayer, py::arg( "board_layer" ) )

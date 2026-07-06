@@ -160,6 +160,14 @@ public:
     // "attach failed" (0.6 — distinguishes file/parse/DRC/attach failure modes).
     bool load( const std::string& pcbPath, std::string* aErr = nullptr );
 
+    // Saves the currently loaded/attached board back out via the same
+    // kiface-free PCB_IO_KICAD_SEXPR writer load() reads with. Lets a
+    // route -> commit -> save pipeline stay entirely inside this module,
+    // without round-tripping the file through a different KiCad build.
+    // Returns false (and, if aErr is non-null, a reason) if no board is
+    // loaded or the write fails.
+    bool save( const std::string& pcbPath, std::string* aErr = nullptr );
+
     // Routing setup against an already-loaded BOARD (its DRC engine must already
     // be initialized). Does NOT depend on BOARD_LOADER — use when the host has
     // its own board-loading path. Builds the iface/router and syncs the world.

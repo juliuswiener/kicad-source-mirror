@@ -85,3 +85,29 @@ bool PnsBridge::load( const std::string& pcbPath, std::string* aErr )
         return fail( "attach failed" );
     return true;
 }
+
+bool PnsBridge::save( const std::string& pcbPath, std::string* aErr )
+{
+    auto fail = [aErr]( const std::string& msg ) { if( aErr ) *aErr = msg; return false; };
+
+    if( !m_boardHolder )
+        return fail( "no board loaded" );
+
+    wxFileName fnAbs( wxString::FromUTF8( pcbPath ) );
+    fnAbs.MakeAbsolute();
+
+    try
+    {
+        PCB_IO_KICAD_SEXPR io;
+        io.SaveBoard( fnAbs.GetFullPath(), m_boardHolder.get(), nullptr );
+    }
+    catch( const std::exception& e )
+    {
+        return fail( "board save failed: " + std::string( e.what() ) );
+    }
+    catch( ... )
+    {
+        return fail( "board save failed: unknown exception" );
+    }
+    return true;
+}
