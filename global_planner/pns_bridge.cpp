@@ -227,6 +227,27 @@ gplan::Polygon trackPoly( const VECTOR2I& a, const VECTOR2I& b, int width )
              { b.x - n.x, b.y - n.y }, { a.x - n.x, a.y - n.y } };
 }
 
+// NODE::HitTest() (behind QueryHoverItems) tests 2D point containment only —
+// it ignores layer entirely, so at a coordinate where several items coexist
+// on different layers (e.g. a blind/buried via alongside plane copper it
+// doesn't span), the first hit can belong to the wrong layer, handing
+// StartRouting() a seed with the wrong net/geometry for the requested layer.
+// Prefer a hit that actually overlaps the requested layer; fall back to
+// hits[0] only if none do (matches the pre-existing behaviour for that case).
+PNS::ITEM* pickStartItem( const PNS::ITEM_SET& aHits, int aLayer )
+{
+    if( aHits.Empty() )
+        return nullptr;
+
+    for( PNS::ITEM* item : aHits.CItems() )
+    {
+        if( item->Layers().Overlaps( aLayer ) )
+            return item;
+    }
+
+    return aHits[0];
+}
+
 } // namespace
 
 std::vector<gplan::Obstacle> PnsBridge::getObstacles( int pnsLayer ) const
@@ -337,7 +358,7 @@ RouteResult PnsBridge::routeAndCheck( const std::vector<gplan::Waypoint>& wps )
     PNS::ITEM_SET startHits = m_router->QueryHoverItems( startP );
     if( startHits.Empty() )
         startHits = m_router->QueryHoverItems( startP, 100000 ); // ~0.1 mm
-    PNS::ITEM*    startItem = startHits.Empty() ? nullptr : startHits[0];
+    PNS::ITEM*    startItem = pickStartItem( startHits, layer );
 
     // Import track/via sizes from the start item + net rules.
     PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
@@ -451,7 +472,7 @@ RouteGeom PnsBridge::routeAndExtract( const std::vector<gplan::Waypoint>& wps )
     PNS::ITEM_SET startHits = m_router->QueryHoverItems( startP );
     if( startHits.Empty() )
         startHits = m_router->QueryHoverItems( startP, 100000 );
-    PNS::ITEM* startItem = startHits.Empty() ? nullptr : startHits[0];
+    PNS::ITEM* startItem = pickStartItem( startHits, layer );
 
     PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
     m_iface->SetStartLayerFromPNS( layer );
@@ -594,7 +615,7 @@ std::optional<gplan::Waypoint> PnsBridge::nearestUnconnected( double x, double y
     PNS::ITEM_SET hits = m_router->QueryHoverItems( sp );
     if( hits.Empty() )
         hits = m_router->QueryHoverItems( sp, 100000 );
-    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+    PNS::ITEM* startItem = pickStartItem( hits, layer );
     if( !startItem )
         return std::nullopt;
 
@@ -635,7 +656,7 @@ RouteChange PnsBridge::routeAndCommit( const std::vector<gplan::Waypoint>& wps )
     PNS::ITEM_SET hits = m_router->QueryHoverItems( startP );
     if( hits.Empty() )
         hits = m_router->QueryHoverItems( startP, 100000 );
-    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+    PNS::ITEM* startItem = pickStartItem( hits, layer );
 
     PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
     m_iface->SetStartLayerFromPNS( layer );
@@ -1009,7 +1030,7 @@ RouteChange PnsBridge::routeDiffPairAndCommit( const std::vector<gplan::Waypoint
     PNS::ITEM_SET hits = m_router->QueryHoverItems( startP );
     if( hits.Empty() )
         hits = m_router->QueryHoverItems( startP, 100000 );
-    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+    PNS::ITEM* startItem = pickStartItem( hits, layer );
 
     PNS::SIZES_SETTINGS sizes( m_router->Sizes() );
     m_iface->SetStartLayerFromPNS( layer );
@@ -1128,7 +1149,7 @@ PnsBridge::TuneResult PnsBridge::tuneLength( double x, double y, double endX, do
     PNS::ITEM_SET hits = m_router->QueryHoverItems( startP );
     if( hits.Empty() )
         hits = m_router->QueryHoverItems( startP, 100000 );
-    PNS::ITEM* startItem = hits.Empty() ? nullptr : hits[0];
+    PNS::ITEM* startItem = pickStartItem( hits, pnsLayer );
     if( !startItem )
     {
         tr.change.reason = "no existing track at tuning start point";
